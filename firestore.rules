@@ -18,6 +18,13 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == 'laghribredouane@gmail.com' && request.auth.token.email_verified == true)
+        || exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -27,15 +34,58 @@ service cloud.firestore {
     }
 
     function isValidUserProfile(data, userId) {
-      return data.keys().hasAll(['uid', 'displayName', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])
+      return data.keys().hasAll([
+          'uid',
+          'displayName',
+          'email',
+          'emailVerified',
+          'role',
+          'subscriptionStatus',
+          'trialClaimed',
+          'premiumExpiresAt',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'photoURL',
+          'email',
+          'emailVerified',
+          'role',
+          'subscriptionStatus',
+          'trialClaimed',
+          'premiumExpiresAt',
+          'lastDeviceFingerprint',
+          'adminNote',
+          'createdAt',
+          'updatedAt'
+        ])
         && data.uid is string
         && data.uid == userId
-        && data.uid == request.auth.uid
         && data.displayName is string
         && data.displayName.size() >= 1
         && data.displayName.size() <= 120
         && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 254
+        && data.emailVerified is bool
+        && data.role is string
+        && (data.role == 'user' || data.role == 'admin')
+        && data.subscriptionStatus is string
+        && (
+          data.subscriptionStatus == 'free'
+          || data.subscriptionStatus == 'trial_active'
+          || data.subscriptionStatus == 'premium_active'
+          || data.subscriptionStatus == 'expired'
+          || data.subscriptionStatus == 'suspended'
+        )
+        && data.trialClaimed is bool
+        && data.premiumExpiresAt is number
+        && data.premiumExpiresAt >= 0
+        && (!('lastDeviceFingerprint' in data) || (data.lastDeviceFingerprint is string && isValidId(data.lastDeviceFingerprint)))
+        && (!('adminNote' in data) || (data.adminNote is string && data.adminNote.size() <= 300))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
@@ -45,7 +95,6 @@ service cloud.firestore {
         && data.keys().hasOnly(['uid', 'email', 'createdAt', 'updatedAt'])
         && data.uid is string
         && data.uid == userId
-        && data.uid == request.auth.uid
         && data.email is string
         && data.email.size() >= 3
         && data.email.size() <= 254
@@ -80,30 +129,359 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
-    match /users/{userId} {
-      allow get: if isValidId(userId) && isOwner(userId);
+    function isValidDeviceTrial(data, deviceFingerprint) {
+      return data.keys().hasAll(['deviceFingerprint', 'claimedByUid', 'claimedAt'])
+        && data.keys().hasOnly(['deviceFingerprint', 'claimedByUid', 'claimedAt'])
+        && data.deviceFingerprint is string
+        && data.deviceFingerprint == deviceFingerprint
+        && isValidId(data.deviceFingerprint)
+        && data.claimedByUid is string
+        && data.claimedByUid == request.auth.uid
+        && isValidId(data.claimedByUid)
+        && data.claimedAt is timestamp;
+    }
+
+    function isValidUserDevice(data, recordId) {
+      return data.keys().hasAll([
+          'id',
+          'userId',
+          'deviceFingerprint',
+          'userAgent',
+          'os',
+          'browser',
+          'screenResolution',
+          'lastIp',
+          'firstUsedAt',
+          'lastSeenAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'userId',
+          'deviceFingerprint',
+          'userAgent',
+          'os',
+          'browser',
+          'screenResolution',
+          'lastIp',
+          'firstUsedAt',
+          'lastSeenAt'
+        ])
+        && data.id is string
+        && data.id == recordId
+        && isValidId(data.id)
+        && data.userId is string
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && data.deviceFingerprint is string
+        && isValidId(data.deviceFingerprint)
+        && data.userAgent is string
+        && data.userAgent.size() >= 1
+        && data.userAgent.size() <= 300
+        && data.os is string
+        && data.os.size() >= 1
+        && data.os.size() <= 80
+        && data.browser is string
+        && data.browser.size() >= 1
+        && data.browser.size() <= 80
+        && data.screenResolution is string
+        && data.screenResolution.size() >= 1
+        && data.screenResolution.size() <= 40
+        && data.lastIp is string
+        && data.lastIp.size() >= 1
+        && data.lastIp.size() <= 64
+        && data.firstUsedAt is timestamp
+        && data.lastSeenAt is timestamp;
+    }
+
+    function isValidUsageLog(data, logId) {
+      return data.keys().hasAll(['id', 'userId', 'deviceFingerprint', 'toolId', 'fileCount', 'totalBytes', 'createdAtMs', 'createdAt'])
+        && data.keys().hasOnly(['id', 'userId', 'deviceFingerprint', 'toolId', 'fileCount', 'totalBytes', 'createdAtMs', 'createdAt'])
+        && data.id is string
+        && data.id == logId
+        && isValidId(data.id)
+        && data.userId is string
+        && data.userId == request.auth.uid
+        && isValidId(data.userId)
+        && data.deviceFingerprint is string
+        && isValidId(data.deviceFingerprint)
+        && data.toolId is string
+        && data.toolId.size() >= 1
+        && data.toolId.size() <= 40
+        && data.toolId.matches('^[a-z0-9_\\-]+$')
+        && data.fileCount is number
+        && data.fileCount >= 1
+        && data.fileCount <= 500
+        && data.totalBytes is number
+        && data.totalBytes >= 0
+        && data.totalBytes <= 1073741824
+        && data.createdAtMs is number
+        && data.createdAtMs > 0
+        && data.createdAt is timestamp;
+    }
+
+    function isValidPremiumRequest(data, requestId) {
+      return data.keys().hasAll([
+          'id',
+          'userId',
+          'reference',
+          'planId',
+          'planLabel',
+          'cycle',
+          'currency',
+          'amount',
+          'formattedAmount',
+          'payerName',
+          'payerEmail',
+          'transferDate',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'userId',
+          'reference',
+          'planId',
+          'planLabel',
+          'cycle',
+          'currency',
+          'amount',
+          'formattedAmount',
+          'payerName',
+          'payerEmail',
+          'bankOrigin',
+          'transferDate',
+          'note',
+          'status',
+          'reviewedBy',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.id is string
+        && data.id == requestId
+        && isValidId(data.id)
+        && data.userId is string
+        && isValidId(data.userId)
+        && data.reference is string
+        && data.reference.size() >= 1
+        && data.reference.size() <= 80
+        && data.planId is string
+        && (data.planId == 'premium_pro' || data.planId == 'premium_team')
+        && data.planLabel is string
+        && data.planLabel.size() >= 1
+        && data.planLabel.size() <= 80
+        && data.cycle is string
+        && (data.cycle == 'monthly' || data.cycle == 'annual')
+        && data.currency is string
+        && (data.currency == 'MAD' || data.currency == 'USD' || data.currency == 'EUR')
+        && data.amount is number
+        && data.amount >= 0
+        && data.formattedAmount is string
+        && data.formattedAmount.size() >= 1
+        && data.formattedAmount.size() <= 40
+        && data.payerName is string
+        && data.payerName.size() >= 1
+        && data.payerName.size() <= 120
+        && data.payerEmail is string
+        && data.payerEmail.size() >= 3
+        && data.payerEmail.size() <= 254
+        && (!('bankOrigin' in data) || (data.bankOrigin is string && data.bankOrigin.size() <= 120))
+        && data.transferDate is string
+        && data.transferDate.size() >= 1
+        && data.transferDate.size() <= 40
+        && (!('note' in data) || (data.note is string && data.note.size() <= 500))
+        && data.status is string
+        && (data.status == 'pending' || data.status == 'approved' || data.status == 'rejected')
+        && (!('reviewedBy' in data) || (data.reviewedBy is string && data.reviewedBy.size() <= 128))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidBannedDevice(data, deviceFingerprint) {
+      return data.keys().hasAll(['deviceFingerprint', 'reason', 'bannedByUid', 'createdAt'])
+        && data.keys().hasOnly(['deviceFingerprint', 'reason', 'bannedByUid', 'createdAt'])
+        && data.deviceFingerprint is string
+        && data.deviceFingerprint == deviceFingerprint
+        && isValidId(data.deviceFingerprint)
+        && data.reason is string
+        && data.reason.size() >= 1
+        && data.reason.size() <= 300
+        && data.bannedByUid is string
+        && isValidId(data.bannedByUid)
+        && data.createdAt is timestamp;
+    }
+
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow list: if false;
+      allow write: if false;
+    }
+
+    match /device_trials/{deviceFingerprint} {
+      allow get: if isSignedIn() && isValidId(deviceFingerprint);
+      allow list: if isAdmin();
+      allow create: if isSignedIn()
+        && request.auth.token.email_verified == true
+        && isValidId(deviceFingerprint)
+        && isValidDeviceTrial(incoming(), deviceFingerprint)
+        && incoming().claimedAt == request.time
+        && !exists(/databases/$(database)/documents/banned_devices/$(deviceFingerprint));
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    match /banned_devices/{deviceFingerprint} {
+      allow get: if isSignedIn() && isValidId(deviceFingerprint);
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && isValidId(deviceFingerprint)
+        && isValidBannedDevice(incoming(), deviceFingerprint)
+        && incoming().bannedByUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(deviceFingerprint);
+    }
+
+    match /user_devices/{recordId} {
+      allow get: if isValidId(recordId) && (
+        isAdmin()
+        || (
+          isSignedIn()
+          && (
+            (resource != null && existing().userId == request.auth.uid)
+            || (resource == null && recordId.matches('^' + request.auth.uid + '_.*'))
+          )
+        )
+      );
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn()
+        && isValidId(recordId)
+        && recordId.matches('^' + request.auth.uid + '_.*')
+        && isValidUserDevice(incoming(), recordId)
+        && incoming().firstUsedAt == request.time
+        && incoming().lastSeenAt == request.time;
+      allow update: if isSignedIn()
+        && isValidId(recordId)
+        && isValidUserDevice(incoming(), recordId)
+        && incoming().userId == existing().userId
+        && incoming().deviceFingerprint == existing().deviceFingerprint
+        && incoming().firstUsedAt == existing().firstUsedAt
+        && incoming().lastSeenAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['userAgent', 'os', 'browser', 'screenResolution', 'lastIp', 'lastSeenAt']);
+      allow delete: if isAdmin() && isValidId(recordId);
+    }
+
+    match /usage_logs/{logId} {
+      allow get: if isValidId(logId) && (isAdmin() || (isSignedIn() && resource != null && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn()
+        && isValidId(logId)
+        && isValidUsageLog(incoming(), logId)
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(logId);
+    }
+
+    match /premium_requests/{requestId} {
+      allow get: if isValidId(requestId) && (isAdmin() || (isSignedIn() && resource != null && existing().userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn()
+        && isValidId(requestId)
+        && isValidPremiumRequest(incoming(), requestId)
+        && incoming().userId == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isAdmin()
+        && isValidId(requestId)
+        && isValidPremiumRequest(incoming(), requestId)
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reviewedBy', 'updatedAt']);
+      allow delete: if isAdmin() && isValidId(requestId);
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
       allow create: if isValidId(userId)
         && isOwner(userId)
+        && incoming().uid == request.auth.uid
         && isValidUserProfile(incoming(), userId)
+        && incoming().role == 'user'
+        && incoming().subscriptionStatus == 'free'
+        && incoming().trialClaimed == false
+        && incoming().premiumExpiresAt == 0
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isValidId(userId)
-        && isOwner(userId)
         && isValidUserProfile(incoming(), userId)
         && incoming().uid == existing().uid
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt']);
-      allow delete: if isValidId(userId) && isOwner(userId);
+        && (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'subscriptionStatus', 'trialClaimed', 'premiumExpiresAt', 'adminNote', 'emailVerified', 'updatedAt']))
+          || (
+            isOwner(userId)
+            && ('subscriptionStatus' in existing())
+            && incoming().role == existing().role
+            && incoming().subscriptionStatus == existing().subscriptionStatus
+            && incoming().trialClaimed == existing().trialClaimed
+            && incoming().premiumExpiresAt == existing().premiumExpiresAt
+            && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'email', 'emailVerified', 'lastDeviceFingerprint', 'updatedAt'])
+          )
+          || (
+            isOwner(userId)
+            && !('subscriptionStatus' in existing())
+            && incoming().role == 'user'
+            && incoming().subscriptionStatus == 'free'
+            && incoming().trialClaimed == false
+            && incoming().premiumExpiresAt == 0
+            && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'email', 'emailVerified', 'lastDeviceFingerprint', 'role', 'subscriptionStatus', 'trialClaimed', 'premiumExpiresAt', 'updatedAt'])
+          )
+          || (
+            isOwner(userId)
+            && request.auth.token.email_verified == true
+            && ('subscriptionStatus' in existing())
+            && existing().subscriptionStatus == 'free'
+            && existing().trialClaimed == false
+            && incoming().role == existing().role
+            && incoming().subscriptionStatus == 'trial_active'
+            && incoming().trialClaimed == true
+            && incoming().emailVerified == true
+            && incoming().lastDeviceFingerprint is string
+            && isValidId(incoming().lastDeviceFingerprint)
+            && incoming().premiumExpiresAt > request.time.toMillis()
+            && incoming().premiumExpiresAt <= (request.time.toMillis() + 604920000)
+            && !exists(/databases/$(database)/documents/banned_devices/$(incoming().lastDeviceFingerprint))
+            && existsAfter(/databases/$(database)/documents/device_trials/$(incoming().lastDeviceFingerprint))
+            && getAfter(/databases/$(database)/documents/device_trials/$(incoming().lastDeviceFingerprint)).data.claimedByUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['subscriptionStatus', 'trialClaimed', 'premiumExpiresAt', 'emailVerified', 'lastDeviceFingerprint', 'updatedAt'])
+          )
+          || (
+            isOwner(userId)
+            && ('subscriptionStatus' in existing())
+            && (existing().subscriptionStatus == 'trial_active' || existing().subscriptionStatus == 'premium_active')
+            && existing().premiumExpiresAt > 0
+            && request.time.toMillis() > existing().premiumExpiresAt
+            && incoming().subscriptionStatus == 'expired'
+            && incoming().role == existing().role
+            && incoming().trialClaimed == existing().trialClaimed
+            && incoming().premiumExpiresAt == existing().premiumExpiresAt
+            && incoming().diff(existing()).affectedKeys().hasOnly(['subscriptionStatus', 'updatedAt'])
+          )
+        );
+      allow delete: if isAdmin() && isValidId(userId);
 
       match /private/{infoId} {
-        allow get: if isValidId(userId) && isValidId(infoId) && isOwner(userId);
+        allow get: if isValidId(userId) && isValidId(infoId) && (isOwner(userId) || isAdmin());
         allow list: if false;
         allow create: if isValidId(userId)
           && isValidId(infoId)
           && infoId == 'info'
           && isOwner(userId)
+          && incoming().uid == request.auth.uid
           && exists(/databases/$(database)/documents/users/$(userId))
           && isValidUserPrivateInfo(incoming(), userId)
           && incoming().createdAt == request.time
@@ -112,23 +490,25 @@ service cloud.firestore {
           && isValidId(infoId)
           && infoId == 'info'
           && isOwner(userId)
+          && incoming().uid == request.auth.uid
           && isValidUserPrivateInfo(incoming(), userId)
           && incoming().uid == existing().uid
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
           && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']);
-        allow delete: if isValidId(userId) && isValidId(infoId) && isOwner(userId);
+        allow delete: if (isOwner(userId) || isAdmin()) && isValidId(userId) && isValidId(infoId);
       }
 
       match /history/{entryId} {
         allow get: if isValidId(userId)
           && isValidId(entryId)
-          && isOwner(userId)
-          && existing().userId == request.auth.uid;
-        allow list: if isSignedIn()
+          && (isAdmin() || (isOwner(userId) && (resource == null || existing().userId == request.auth.uid)));
+        allow list: if isAdmin() || (
+          isSignedIn()
           && isValidId(userId)
           && request.auth.uid == userId
-          && resource.data.userId == request.auth.uid;
+          && resource.data.userId == request.auth.uid
+        );
         allow create: if isValidId(userId)
           && isValidId(entryId)
           && isOwner(userId)
@@ -139,8 +519,7 @@ service cloud.firestore {
         allow update: if false;
         allow delete: if isValidId(userId)
           && isValidId(entryId)
-          && isOwner(userId)
-          && existing().userId == request.auth.uid;
+          && (isAdmin() || (isOwner(userId) && (resource == null || existing().userId == request.auth.uid)));
       }
     }
   }

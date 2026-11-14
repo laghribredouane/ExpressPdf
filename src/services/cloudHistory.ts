@@ -57,6 +57,12 @@ export async function ensureUserProfileDocs(
       const profilePayload: Record<string, unknown> = {
         uid: user.uid,
         displayName: safeDisplayName,
+        email: safeEmail,
+        emailVerified: Boolean(user.emailVerified),
+        role: 'user',
+        subscriptionStatus: 'free',
+        trialClaimed: false,
+        premiumExpiresAt: 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
@@ -65,12 +71,22 @@ export async function ensureUserProfileDocs(
       }
       await setDoc(userRef, profilePayload);
     } else {
+      const existingData = snap.data() || {};
+      const isLegacy = !('subscriptionStatus' in existingData);
       const updatePayload: Record<string, unknown> = {
         displayName: safeDisplayName,
+        email: safeEmail,
+        emailVerified: Boolean(user.emailVerified),
         updatedAt: serverTimestamp(),
       };
       if (safePhotoUrl) {
         updatePayload.photoURL = safePhotoUrl;
+      }
+      if (isLegacy) {
+        updatePayload.role = 'user';
+        updatePayload.subscriptionStatus = 'free';
+        updatePayload.trialClaimed = false;
+        updatePayload.premiumExpiresAt = 0;
       }
       await updateDoc(userRef, updatePayload);
     }

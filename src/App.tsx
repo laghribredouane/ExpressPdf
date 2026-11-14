@@ -1,12 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
-import { FileUp } from 'lucide-react';
+import {
+  AlertTriangle,
+  FileUp,
+  MailCheck,
+  RefreshCw,
+  ShieldAlert,
+  X,
+} from 'lucide-react';
+import { AdminDashboardView } from './components/AdminDashboardView';
 import { AuthModal, type AuthModalMode } from './components/AuthModal';
 import { Footer } from './components/Footer';
 import { HomeView } from './components/HomeView';
 import { InfoModal } from './components/InfoModal';
 import { Navbar } from './components/Navbar';
+import { OfflineIndicator } from './components/OfflineIndicator';
 import { PremiumModal } from './components/PremiumModal';
+import { PricingView } from './components/PricingView';
+import { QuotaUpgradeModal } from './components/QuotaUpgradeModal';
 import { ToastContainer } from './components/ToastContainer';
 import {
   WorkspaceIntegrationsModal,
@@ -27,6 +38,7 @@ import {
   signInWithGoogleWorkspace,
   subscribeWorkspaceToken,
 } from './firebase';
+import { useSubscriptionAndQuota } from './hooks/useSubscriptionAndQuota';
 import {
   clearCloudHistory,
   deleteCloudHistoryEntry,
@@ -37,8 +49,10 @@ import {
 } from './services/cloudHistory';
 import type {
   BankTransferSubmission,
+  BillingCycle,
   CategoryId,
   CurrencyCode,
+  QuotaCheckResult,
   RecentProcessedFile,
   ToastItem,
   ToolId,
@@ -47,6 +61,28 @@ import type {
 const RECENT_CACHE_KEY = 'pdfexpress-recent-files';
 const PREMIUM_TRANSFER_KEY = 'pdfexpress-premium-transfer';
 
+type AppPage = 'main' | 'tarifs' | 'admin';
+
+function getPageFromPathname(pathname: string): AppPage {
+  const normalized = pathname.toLowerCase();
+  if (normalized.startsWith('/tarifs')) return 'tarifs';
+  if (normalized.startsWith('/admin')) return 'admin';
+  return 'main';
+}
+
+function getToolFromSearch(search: string): ToolId | null {
+  try {
+    const params = new URLSearchParams(search);
+    const toolParam = params.get('tool');
+    if (toolParam && TOOLS.some((t) => t.id === toolParam)) {
+      return toolParam as ToolId;
+    }
+  } catch {
+    // Ignore malformed query string
+  }
+  return null;
+}
+
 export default function App() {
   const [isDark, setIsDark] = useState<boolean>(() => {
     const saved = localStorage.getItem('pdfexpress-theme');
@@ -54,9 +90,16 @@ export default function App() {
     if (saved === 'light') return false;
     return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
   });
+  const [activePage, setActivePage] = useState<AppPage>(() =>
+    getPageFromPathname(window.location.pathname)
+  );
   const [activeCategory, setActiveCategory] = useState<CategoryId>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [currentToolId, setCurrentToolId] = useState<ToolId | null>(null);
+  const [currentToolId, setCurrentToolId] = useState<ToolId | null>(() =>
+    getPageFromPathname(window.location.pathname) === 'main'
+      ? getToolFromSearch(window.location.search)
+      : null
+  );
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [isDraggingGlobal, setIsDraggingGlobal] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[] | null>(null);
@@ -64,7 +107,19 @@ export default function App() {
   const [language, setLanguage] = useState<string>('fr');
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
   const [premiumModalOpen, setPremiumModalOpen] = useState(false);
+  const [premiumInitialPlan, setPremiumInitialPlan] = useState<
+    'premium_pro' | 'premium_team'
+  >('premium_pro');
+  const [premiumInitialCycle, setPremiumInitialCycle] =
+    useState<BillingCycle>('annual');
   const [selectedCurrency, setSelectedCurrency] = useState<CurrencyCode>('MAD');
+  const [quotaModalState, setQuotaModalState] = useState<{
+    isOpen: boolean;
+    result: QuotaCheckResult | null;
+  }>({
+    isOpen: false,
+    result: null,
+  });
   const [activeTransfer, setActiveTransfer] =
     useState<BankTransferSubmission | null>(() => {
       try {
@@ -85,6 +140,7 @@ export default function App() {
     }
   });
   const [authUser, setAuthUser] = useState<User | null>(null);
+  const [profileReadyUid, setProfileReadyUid] = useState<string | null>(null);
   const [authProfileOverride, setAuthProfileOverride] = useState<{
     displayName?: string | null;
     emailVerified?: boolean;
@@ -113,10 +169,16 @@ export default function App() {
     mode: 'hub',
     attachmentContext: null,
   });
+  const [globalProgress, setGlobalProgress] = useState<{
+    progress: number;
+    message: string;
+  } | null>(null);
 
   const dragCounterRef = useRef(0);
   const recentFilesRef = useRef(recentFiles);
   recentFilesRef.current = recentFiles;
+  const trialNotifiedUidRef = useRef<string | null>(null);
+  const deviceBlockedNotifiedUidRef = useRef<string | null>(null);
   const currentTool = TOOLS.find((t) => t.id === currentToolId) || null;
 
   useEffect(() => {
@@ -132,6 +194,97 @@ export default function App() {
     }
   }, [isDark]);
 
+  // Dynamic SEO metadata, canonical URL & social cards per active page / tool
+  useEffect(() => {
+    const defaultTitle = 'PDFExpress – 34 Outils PDF Gratuits & IA en Ligne';
+    const defaultDesc =
+      'Fusionnez, divisez, compressez, convertissez, signez et résumez vos PDF avec l’IA gratuitement dans votre navigateur, même hors ligne, avec PDFExpress.';
+
+    let pageTitle = defaultTitle;
+    let pageDesc = defaultDesc;
+    let canonicalPath = '/';
+    let robotsContent =
+      'index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1';
+
+    if (activePage === 'tarifs') {
+      pageTitle = 'Tarifs & Essai Premium 7 Jours – PDFExpress';
+      pageDesc =
+        'Découvrez les offres Gratuit et Premium PDFExpress : essai offert de 7 jours, outils PDF illimités et assistants IA.';
+      canonicalPath = '/tarifs';
+    } else if (activePage === 'admin') {
+      pageTitle = 'Administration SaaS – PDFExpress';
+      pageDesc = 'Panneau de gestion des comptes et abonnements PDFExpress.';
+      canonicalPath = '/admin';
+      robotsContent = 'noindex, nofollow';
+    } else if (currentTool) {
+      pageTitle = `${currentTool.title} en ligne gratuit – PDFExpress`;
+      pageDesc = currentTool.desc;
+      canonicalPath = `/?tool=${encodeURIComponent(currentTool.id)}`;
+    }
+
+    document.title = pageTitle;
+
+    const canonicalUrl = `${window.location.origin}${canonicalPath}`;
+    const setMeta = (selector: string, content: string) => {
+      const el = document.querySelector(selector);
+      if (el) el.setAttribute('content', content);
+    };
+
+    setMeta('meta[name="description"]', pageDesc);
+    setMeta('meta[name="robots"]', robotsContent);
+    setMeta('meta[property="og:title"]', pageTitle);
+    setMeta('meta[property="og:description"]', pageDesc);
+    setMeta('meta[name="twitter:title"]', pageTitle);
+    setMeta('meta[name="twitter:description"]', pageDesc);
+
+    const canonicalLink = document.querySelector('link[rel="canonical"]');
+    if (canonicalLink) {
+      canonicalLink.setAttribute('href', canonicalUrl);
+    }
+
+    const sitemapLink = document.querySelector('link[rel="sitemap"]');
+    if (sitemapLink) {
+      sitemapLink.setAttribute('href', `${window.location.origin}/sitemap.xml`);
+    }
+
+    let ogUrl = document.querySelector('meta[property="og:url"]');
+    if (!ogUrl) {
+      ogUrl = document.createElement('meta');
+      ogUrl.setAttribute('property', 'og:url');
+      document.head.appendChild(ogUrl);
+    }
+    ogUrl.setAttribute('content', canonicalUrl);
+  }, [activePage, currentTool]);
+
+  // Browser back/forward navigation support for /tarifs, /admin and ?tool= PWA shortcuts
+  useEffect(() => {
+    const onPopState = () => {
+      const nextPage = getPageFromPathname(window.location.pathname);
+      setActivePage(nextPage);
+      setCurrentToolId(
+        nextPage === 'main' ? getToolFromSearch(window.location.search) : null
+      );
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
+  const navigateToPage = useCallback((page: AppPage) => {
+    setActivePage(page);
+    if (page !== 'main') {
+      setCurrentToolId(null);
+    }
+    const targetPath =
+      page === 'tarifs' ? '/tarifs' : page === 'admin' ? '/admin' : '/';
+    if (
+      window.location.pathname !== targetPath ||
+      (page === 'main' && window.location.search)
+    ) {
+      window.history.pushState({}, '', targetPath);
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
+
   const notify = useCallback(
     (message: string, type: 'info' | 'success' | 'error' = 'info') => {
       const id = crypto.randomUUID();
@@ -142,6 +295,69 @@ export default function App() {
     },
     []
   );
+
+  const handleLanguageChange = useCallback(
+    (lang: string) => {
+      setLanguage(lang);
+      document.documentElement.lang = lang;
+      document.documentElement.dir = lang === 'ar' ? 'rtl' : 'ltr';
+      const labels: Record<string, string> = {
+        fr: 'Langue définie sur Français (FR)',
+        en: 'Language switched to English (EN)',
+        ar: 'تم تحديد اللغة: العربية (AR)',
+      };
+      notify(labels[lang] || 'Langue mise à jour', 'info');
+    },
+    [notify]
+  );
+
+  const handleTrialActivated = useCallback(() => {
+    const uid = auth.currentUser?.uid || 'active';
+    if (trialNotifiedUidRef.current === uid) return;
+    trialNotifiedUidRef.current = uid;
+    notify(
+      'Votre essai Premium gratuit de 7 jours est maintenant actif !',
+      'success'
+    );
+  }, [notify]);
+
+  const handleDeviceTrialBlocked = useCallback(() => {
+    const uid = auth.currentUser?.uid || 'blocked';
+    if (deviceBlockedNotifiedUidRef.current === uid) return;
+    deviceBlockedNotifiedUidRef.current = uid;
+    notify(
+      'Un essai gratuit a déjà été utilisé sur cet appareil. Votre compte reste sur le plan Gratuit Limité.',
+      'info'
+    );
+  }, [notify]);
+
+  const {
+    profile: saasProfile,
+    myRequests,
+    effectiveTier,
+    isAdmin,
+    isPremiumOrTrial,
+    isDeviceBanned,
+    banReason,
+    trialBlockedOnDevice,
+    dismissTrialBlockedBanner,
+    countdownLabel,
+    currentLimits,
+    checkUserQuota,
+    consumeQuota,
+    refreshDeviceSync,
+  } = useSubscriptionAndQuota({
+    authUser,
+    authEmailVerified:
+      authProfileOverride?.emailVerified ?? authUser?.emailVerified,
+    isUserDocReady: Boolean(authUser && profileReadyUid === authUser.uid),
+    onTrialActivated: handleTrialActivated,
+    onDeviceTrialBlocked: handleDeviceTrialBlocked,
+  });
+
+  const handleQuotaBlocked = useCallback((result: QuotaCheckResult) => {
+    setQuotaModalState({ isOpen: true, result });
+  }, []);
 
   // Global drag & drop listener
   useEffect(() => {
@@ -167,6 +383,10 @@ export default function App() {
       setIsDraggingGlobal(false);
       if (e.dataTransfer && e.dataTransfer.files.length > 0) {
         const filesArr = Array.from(e.dataTransfer.files);
+        setActivePage('main');
+        if (window.location.pathname !== '/') {
+          window.history.pushState({}, '', '/');
+        }
         setCurrentToolId((prev) => {
           if (prev) return prev;
           return filesArr[0].type.startsWith('image/') ? 'jpg2pdf' : 'merge';
@@ -188,7 +408,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (currentToolId !== null || !pendingScrollId) return;
+    if (activePage !== 'main' || currentToolId !== null || !pendingScrollId) {
+      return;
+    }
     const frameId = requestAnimationFrame(() => {
       const target = document.getElementById(pendingScrollId);
       if (target) {
@@ -197,10 +419,28 @@ export default function App() {
       setPendingScrollId(null);
     });
     return () => cancelAnimationFrame(frameId);
-  }, [currentToolId, pendingScrollId]);
+  }, [activePage, currentToolId, pendingScrollId]);
 
   const handleSelectTool = (id: ToolId) => {
+    const toolObj = TOOLS.find((t) => t.id === id);
+    if (toolObj) {
+      const q = checkUserQuota({ tool: toolObj });
+      if (
+        !q.allowed &&
+        (q.blockReasonCode === 'pro_tool_locked' ||
+          q.blockReasonCode === 'banned_device' ||
+          q.blockReasonCode === 'suspended_account')
+      ) {
+        handleQuotaBlocked(q);
+        return;
+      }
+    }
+
     setPendingScrollId(null);
+    setActivePage('main');
+    if (window.location.pathname !== '/') {
+      window.history.pushState({}, '', '/');
+    }
     setCurrentToolId(id);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -210,11 +450,15 @@ export default function App() {
     setActiveCategory('all');
     setSearchQuery('');
     setCurrentToolId(null);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    navigateToPage('main');
   };
 
   const handleNavigateSection = (sectionId: string) => {
     setCurrentToolId(null);
+    setActivePage('main');
+    if (window.location.pathname !== '/') {
+      window.history.pushState({}, '', '/');
+    }
     setPendingScrollId(sectionId);
   };
 
@@ -222,11 +466,21 @@ export default function App() {
     setActiveCategory(cat);
     setSearchQuery('');
     setCurrentToolId(null);
+    setActivePage('main');
+    if (window.location.pathname !== '/') {
+      window.history.pushState({}, '', '/');
+    }
     setPendingScrollId('tools-catalog');
   };
 
   const handleSearchChange = (q: string) => {
     setSearchQuery(q);
+    if (activePage !== 'main') {
+      setActivePage('main');
+      if (window.location.pathname !== '/') {
+        window.history.pushState({}, '', '/');
+      }
+    }
     if (currentToolId !== null) {
       setCurrentToolId(null);
     }
@@ -253,12 +507,16 @@ export default function App() {
       setIsAuthReady(true);
 
       if (!user) {
+        setProfileReadyUid(null);
         setCloudFiles([]);
+        trialNotifiedUidRef.current = null;
+        deviceBlockedNotifiedUidRef.current = null;
         return;
       }
 
       try {
         await ensureUserProfileDocs(user);
+        setProfileReadyUid(user.uid);
         const syncedCount = await syncLocalHistoryBatchToCloud(
           user.uid,
           recentFilesRef.current
@@ -342,7 +600,7 @@ export default function App() {
         setAuthModal((prev) => ({ ...prev, isOpen: false }));
         notify(
           verificationSent
-            ? 'Compte créé ! Un e-mail de vérification vient de vous être envoyé.'
+            ? 'Compte créé ! Vérifiez votre e-mail pour activer vos 7 jours Premium offerts.'
             : 'Compte créé avec succès ! Historique cloud activé.',
           'success'
         );
@@ -407,6 +665,7 @@ export default function App() {
           emailVerified: refreshed.emailVerified,
         });
         if (refreshed.emailVerified) {
+          await refreshDeviceSync();
           notify('Adresse e-mail vérifiée avec succès !', 'success');
         } else {
           notify(
@@ -420,20 +679,23 @@ export default function App() {
     } finally {
       setIsAuthBusy(false);
     }
-  }, [notify]);
+  }, [notify, refreshDeviceSync]);
 
   const handleSignOut = useCallback(async () => {
     setIsAuthBusy(true);
     try {
       clearWorkspaceAccessToken();
       await signOut(auth);
+      if (activePage === 'admin') {
+        navigateToPage('main');
+      }
       notify('Vous êtes maintenant déconnecté.', 'info');
     } catch {
       notify('Erreur lors de la déconnexion.', 'error');
     } finally {
       setIsAuthBusy(false);
     }
-  }, [notify]);
+  }, [activePage, navigateToPage, notify]);
 
   const handleFileProcessed = useCallback(
     (entry: {
@@ -522,9 +784,11 @@ export default function App() {
   }, [authUser, notify]);
 
   const displayedRecentFiles = authUser ? cloudFiles : recentFiles;
+  const currentEmailVerified =
+    authProfileOverride?.emailVerified ?? authUser?.emailVerified ?? false;
 
   return (
-    <div className="min-h-screen flex flex-col bg-brand-bgLight text-neutral-800 dark:bg-brand-bgDark dark:text-neutral-100">
+    <div className="min-h-screen overflow-x-hidden max-w-full flex flex-col bg-brand-bgLight text-neutral-800 dark:bg-brand-bgDark dark:text-neutral-100">
       {/* Global Drag & Drop Overlay */}
       {isDraggingGlobal && (
         <div className="fixed inset-0 z-[100] bg-brand-red/90 backdrop-blur-sm flex flex-col items-center justify-center text-white pointer-events-none">
@@ -541,6 +805,8 @@ export default function App() {
       <Navbar
         isDark={isDark}
         onToggleTheme={() => setIsDark((d) => !d)}
+        language={language}
+        onLanguageChange={handleLanguageChange}
         searchQuery={searchQuery}
         onSearchChange={handleSearchChange}
         onGoHome={handleGoHome}
@@ -548,7 +814,11 @@ export default function App() {
         onSelectCategory={handleSelectCategory}
         onNavigateSection={handleNavigateSection}
         onOpenInfoPage={(pageId) => setActiveInfoPageId(pageId)}
-        onOpenPremium={() => setPremiumModalOpen(true)}
+        onOpenPremium={() => {
+          setPremiumInitialPlan('premium_pro');
+          setPremiumInitialCycle('annual');
+          setPremiumModalOpen(true);
+        }}
         hasPendingPremium={Boolean(activeTransfer)}
         recentFiles={displayedRecentFiles}
         onClearRecentCache={() => {
@@ -565,8 +835,7 @@ export default function App() {
                   authProfileOverride?.displayName ?? authUser.displayName,
                 email: authUser.email,
                 photoURL: authUser.photoURL,
-                emailVerified:
-                  authProfileOverride?.emailVerified ?? authUser.emailVerified,
+                emailVerified: currentEmailVerified,
               }
             : null
         }
@@ -589,9 +858,160 @@ export default function App() {
             attachmentContext: null,
           })
         }
+        effectiveTier={effectiveTier}
+        countdownLabel={countdownLabel}
+        remainingToday={currentLimits.remainingToday}
+        dailyLimit={currentLimits.dailyLimit}
+        isAdmin={isAdmin}
+        onOpenPricing={() => navigateToPage('tarifs')}
+        onOpenAdmin={() => navigateToPage('admin')}
       />
 
-      {currentTool ? (
+      {/* Bannières d'état SaaS contextuelles */}
+      {isDeviceBanned && (
+        <div className="bg-red-600 text-white px-4 py-2.5 text-xs sm:text-sm font-semibold">
+          <div className="max-w-[1440px] mx-auto flex items-center justify-center gap-2 text-center">
+            <ShieldAlert className="w-4 h-4 shrink-0" />
+            <span>
+              {banReason ||
+                "Cet appareil a été bloqué par l'administrateur pour abus répété."}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {!isDeviceBanned && effectiveTier === 'suspended' && (
+        <div className="bg-red-600 text-white px-4 py-2.5 text-xs sm:text-sm font-semibold">
+          <div className="max-w-[1440px] mx-auto flex items-center justify-center gap-2 text-center">
+            <ShieldAlert className="w-4 h-4 shrink-0" />
+            <span>
+              Votre compte a été suspendu par l’administrateur. Les outils de
+              traitement sont temporairement verrouillés.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {!isDeviceBanned &&
+        effectiveTier !== 'suspended' &&
+        trialBlockedOnDevice && (
+          <div className="bg-amber-100 dark:bg-amber-950/60 border-b border-amber-300 dark:border-amber-800 px-4 py-2.5 text-xs font-semibold text-amber-950 dark:text-amber-200">
+            <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span>
+                  Un essai gratuit a déjà été utilisé sur cet appareil. Ce compte
+                  a été placé sur le plan <strong>Gratuit Limité</strong> (3
+                  tâches/24h).
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => navigateToPage('tarifs')}
+                  className="px-3 py-1 rounded-lg bg-amber-400 text-neutral-900 font-extrabold hover:bg-amber-500 transition-colors"
+                >
+                  Voir les tarifs
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissTrialBlockedBanner}
+                  aria-label="Fermer l'alerte"
+                  className="p-1 rounded-lg hover:bg-amber-200/70 dark:hover:bg-amber-900/50"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      {!isDeviceBanned &&
+        effectiveTier !== 'suspended' &&
+        !trialBlockedOnDevice &&
+        authUser &&
+        !currentEmailVerified && (
+          <div className="bg-sky-50 dark:bg-sky-950/40 border-b border-sky-200 dark:border-sky-900 px-4 py-2.5 text-xs font-semibold text-sky-900 dark:text-sky-200">
+            <div className="max-w-[1440px] mx-auto flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <MailCheck className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+                <span>
+                  Vérifiez votre e-mail (<strong>{authUser.email}</strong>) pour
+                  activer automatiquement votre{' '}
+                  <strong>essai Premium gratuit de 7 jours</strong>.
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={isAuthBusy}
+                  onClick={() => {
+                    void handleResendVerification();
+                  }}
+                  className="px-3 py-1 rounded-lg bg-white dark:bg-neutral-900 border border-sky-300 dark:border-sky-800 hover:border-sky-500 font-bold"
+                >
+                  Renvoyer l’e-mail
+                </button>
+                <button
+                  type="button"
+                  disabled={isAuthBusy}
+                  onClick={() => {
+                    void handleRefreshVerification();
+                  }}
+                  className="px-3 py-1 rounded-lg bg-sky-600 hover:bg-sky-700 text-white font-bold inline-flex items-center gap-1"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>J’ai vérifié</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+      {globalProgress && (
+        <div className="bg-brand-red text-white px-4 py-2.5 text-xs sm:text-sm font-semibold shadow-md transition-all duration-300 z-40 sticky top-16">
+          <div className="max-w-[1440px] mx-auto flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 truncate">
+              <RefreshCw className="w-4 h-4 shrink-0 animate-spin" />
+              <span className="truncate">{globalProgress.message}</span>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="font-bold">{Math.round(globalProgress.progress)}%</span>
+              <div className="w-32 sm:w-48 h-2.5 bg-white/20 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-white rounded-full transition-all duration-200 shadow-sm"
+                  style={{ width: `${Math.max(0, Math.min(100, globalProgress.progress))}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activePage === 'admin' ? (
+        <AdminDashboardView
+          isAdmin={isAdmin}
+          adminUid={authUser?.uid || null}
+          onBackHome={handleGoHome}
+          onNotify={notify}
+        />
+      ) : activePage === 'tarifs' ? (
+        <PricingView
+          selectedCurrency={selectedCurrency}
+          onCurrencyChange={setSelectedCurrency}
+          effectiveTier={effectiveTier}
+          countdownLabel={countdownLabel}
+          myRequests={myRequests}
+          isSignedIn={Boolean(authUser)}
+          onBackHome={handleGoHome}
+          onOpenSignup={() => setAuthModal({ isOpen: true, mode: 'signup' })}
+          onRequestPremiumActivation={(planId, cycle) => {
+            setPremiumInitialPlan(planId);
+            setPremiumInitialCycle(cycle);
+            setPremiumModalOpen(true);
+          }}
+        />
+      ) : currentTool ? (
         <WorkspaceView
           tool={currentTool}
           droppedFiles={droppedFiles}
@@ -620,6 +1040,22 @@ export default function App() {
               attachmentContext: payload,
             })
           }
+          isPremiumOrTrial={isPremiumOrTrial}
+          isWatermarked={currentLimits.isWatermarked}
+          maxFileMb={currentLimits.maxFileMb}
+          maxBatchFiles={currentLimits.maxBatchFiles}
+          remainingTasks={currentLimits.remainingToday}
+          dailyLimit={currentLimits.dailyLimit}
+          checkUserQuota={checkUserQuota}
+          onQuotaBlocked={handleQuotaBlocked}
+          onQuotaConsumed={consumeQuota}
+          onGlobalProgress={(pct, msg) =>
+            setGlobalProgress(
+              pct !== null
+                ? { progress: pct, message: msg || 'Chargement des fichiers...' }
+                : null
+            )
+          }
         />
       ) : (
         <HomeView
@@ -635,27 +1071,29 @@ export default function App() {
           onOpenInfoPage={(pageId) => setActiveInfoPageId(pageId)}
           selectedCurrency={selectedCurrency}
           onCurrencyChange={setSelectedCurrency}
-          onOpenPremium={() => setPremiumModalOpen(true)}
+          onOpenPremium={() => {
+            setPremiumInitialPlan('premium_pro');
+            setPremiumInitialCycle('annual');
+            setPremiumModalOpen(true);
+          }}
+          onOpenPricing={() => navigateToPage('tarifs')}
+          isPremiumOrTrial={isPremiumOrTrial}
         />
       )}
 
       <Footer
         language={language}
-        onLanguageChange={(lang) => {
-          setLanguage(lang);
-          const labels: Record<string, string> = {
-            fr: 'Langue définie sur Français',
-            en: 'Language switched to English (UI remains French)',
-            es: 'Idioma seleccionado: Español',
-          };
-          notify(labels[lang] || 'Langue mise à jour', 'info');
-        }}
+        onLanguageChange={handleLanguageChange}
         onGoHome={handleGoHome}
         onSelectTool={handleSelectTool}
         onSelectCategory={handleSelectCategory}
         onNavigateSection={handleNavigateSection}
         onOpenInfoPage={(pageId) => setActiveInfoPageId(pageId)}
-        onOpenPremium={() => setPremiumModalOpen(true)}
+        onOpenPremium={() => {
+          setPremiumInitialPlan('premium_pro');
+          setPremiumInitialCycle('annual');
+          setPremiumModalOpen(true);
+        }}
       />
 
       <InfoModal
@@ -690,6 +1128,28 @@ export default function App() {
           }
         }}
         onNotify={notify}
+        authUserId={authUser?.uid || null}
+        defaultPayerName={
+          authProfileOverride?.displayName ??
+          authUser?.displayName ??
+          saasProfile?.displayName ??
+          null
+        }
+        defaultPayerEmail={authUser?.email || null}
+        initialPlanId={premiumInitialPlan}
+        initialCycle={premiumInitialCycle}
+        onRequireAuth={() => setAuthModal({ isOpen: true, mode: 'login' })}
+      />
+
+      <QuotaUpgradeModal
+        isOpen={quotaModalState.isOpen}
+        quotaResult={quotaModalState.result}
+        isGuest={!authUser}
+        onClose={() =>
+          setQuotaModalState((prev) => ({ ...prev, isOpen: false }))
+        }
+        onOpenSignup={() => setAuthModal({ isOpen: true, mode: 'signup' })}
+        onOpenPricing={() => navigateToPage('tarifs')}
       />
 
       <WorkspaceIntegrationsModal
@@ -715,6 +1175,10 @@ export default function App() {
           } else if (!currentToolId) {
             setCurrentToolId('compress');
           }
+          setActivePage('main');
+          if (window.location.pathname !== '/') {
+            window.history.pushState({}, '', '/');
+          }
           setDroppedFiles([file]);
         }}
       />
@@ -730,6 +1194,7 @@ export default function App() {
         onSignInGoogle={() => handleSignInGoogle(true)}
       />
 
+      <OfflineIndicator />
       <ToastContainer toasts={toasts} />
     </div>
   );

@@ -1343,3 +1343,32 @@ export async function executePdfTool(
 
   return { blob, fileName, btnText, statsHtml };
 }
+
+export async function applyFreeTierPdfFooter(blob: Blob): Promise<Blob> {
+  if (blob.type !== 'application/pdf') return blob;
+  try {
+    const ab = await blob.arrayBuffer();
+    const pdfDoc = await PDFDocument.load(ab, { ignoreEncryption: true });
+    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const label = 'Traité avec PDFExpress Gratuit';
+    const fontSize = 8;
+
+    for (const page of pdfDoc.getPages()) {
+      const { width } = page.getSize();
+      const textWidth = font.widthOfTextAtSize(label, fontSize);
+      page.drawText(label, {
+        x: Math.max(16, (width - textWidth) / 2),
+        y: 8,
+        size: fontSize,
+        font,
+        color: rgb(0.45, 0.45, 0.48),
+        opacity: 0.65,
+      });
+    }
+
+    const bytes = await pdfDoc.save({ useObjectStreams: true });
+    return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+  } catch {
+    return blob;
+  }
+}

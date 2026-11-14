@@ -10,6 +10,7 @@ import {
   User as UserIcon,
   X,
 } from 'lucide-react';
+import { isDisposableEmail } from '../utils/disposableEmails';
 import { GoogleSignInButton } from './GoogleSignInButton';
 
 export type AuthModalMode = 'signup' | 'login';
@@ -86,6 +87,13 @@ export function AuthModal({
     const trimmedEmail = email.trim();
     if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
       setLocalError('Veuillez saisir une adresse e-mail valide.');
+      return;
+    }
+
+    if (view === 'signup' && isDisposableEmail(trimmedEmail)) {
+      setLocalError(
+        'Les adresses e-mail temporaires ou jetables (yopmail, temp-mail, 10minutemail…) sont bloquées. Utilisez une adresse permanente.'
+      );
       return;
     }
 
@@ -174,7 +182,7 @@ export function AuthModal({
 
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[90] flex items-center justify-center p-2 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="auth-modal-title"
@@ -187,13 +195,13 @@ export function AuthModal({
         aria-hidden="true"
       />
 
-      <div className="relative z-10 w-full max-w-md bg-white dark:bg-brand-cardDark rounded-3xl shadow-2xl border border-neutral-200 dark:border-brand-borderDark overflow-hidden">
+      <div className="relative z-10 w-[95vw] sm:w-full max-w-md max-h-[90dvh] overflow-y-auto bg-white dark:bg-brand-cardDark rounded-3xl shadow-2xl border border-neutral-200 dark:border-brand-borderDark">
         {/* En-tête */}
-        <div className="px-6 pt-6 pb-4 border-b border-neutral-100 dark:border-brand-borderDark flex items-start justify-between gap-4">
+        <div className="px-4 sm:px-6 pt-5 sm:pt-6 pb-4 border-b border-neutral-100 dark:border-brand-borderDark flex items-start justify-between gap-4">
           <div>
             <h2
               id="auth-modal-title"
-              className="font-display text-xl font-extrabold text-neutral-900 dark:text-white"
+              className="font-display text-lg sm:text-xl font-extrabold text-neutral-900 dark:text-white"
             >
               {view === 'signup'
                 ? 'Créer un compte PDFExpress'
@@ -204,7 +212,7 @@ export function AuthModal({
             <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
               {view === 'reset'
                 ? 'Recevez un lien pour définir un nouveau mot de passe.'
-                : 'Sauvegardez votre historique PDF dans le cloud via E-mail ou Gmail.'}
+                : 'Débloquez 7 jours d’essai Premium offerts après vérification e-mail (1 par appareil).'}
             </p>
           </div>
           <button
@@ -212,13 +220,13 @@ export function AuthModal({
             disabled={busy}
             onClick={onClose}
             aria-label="Fermer la fenêtre de connexion"
-            className="w-8 h-8 rounded-xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 flex items-center justify-center text-neutral-600 dark:text-neutral-300 transition-colors disabled:opacity-50 shrink-0"
+            className="w-9 h-9 rounded-xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 flex items-center justify-center text-neutral-600 dark:text-neutral-300 transition-colors disabled:opacity-50 shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="p-6 space-y-5">
+        <div className="p-4 sm:p-6 space-y-5">
           {/* Onglets Créer un compte / Se connecter */}
           {view !== 'reset' && (
             <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-neutral-100 dark:bg-neutral-800/80">

@@ -11,12 +11,14 @@ import {
   ChevronRight,
   Code,
   Copy,
+  Crown,
   Download,
   FileDiff,
   FilePlus,
   FileSpreadsheet,
   ImagePlus,
   LayoutGrid,
+  Lock,
   Mail,
   Plus,
   Redo2,
@@ -35,11 +37,13 @@ import type {
   ExecutionResult,
   LoadedFile,
   PageOrderItem,
+  QuotaCheckResult,
   ToolDefinition,
   ToolId,
   WorkflowStepId,
 } from '../types/pdf';
 import {
+  applyFreeTierPdfFooter,
   executePdfTool,
   extractFullTextFromPdfJs,
   formatBytes,
@@ -75,6 +79,20 @@ interface WorkspaceViewProps {
     blob: Blob;
     toolTitle: string;
   }) => void;
+  isPremiumOrTrial?: boolean;
+  isWatermarked?: boolean;
+  maxFileMb?: number;
+  maxBatchFiles?: number;
+  remainingTasks?: number | null;
+  dailyLimit?: number | null;
+  checkUserQuota?: (params: {
+    tool?: Pick<ToolDefinition, 'id' | 'title' | 'isPro'>;
+    files?: File[];
+    compressLevel?: string;
+  }) => QuotaCheckResult;
+  onQuotaBlocked?: (result: QuotaCheckResult) => void;
+  onQuotaConsumed?: (toolId: ToolId, files: File[]) => Promise<void> | void;
+  onGlobalProgress?: (progress: number | null, message?: string) => void;
 }
 
 type Stage = 'dropzone' | 'editor' | 'processing' | 'result';
@@ -183,6 +201,16 @@ export function WorkspaceView({
   onImportFromGmail,
   onSendResultViaGmail,
   onScheduleResultInCalendar,
+  isPremiumOrTrial = false,
+  isWatermarked = true,
+  maxFileMb = 200,
+  maxBatchFiles = 999,
+  remainingTasks = null,
+  dailyLimit = null,
+  checkUserQuota,
+  onQuotaBlocked,
+  onQuotaConsumed,
+  onGlobalProgress,
 }: WorkspaceViewProps) {
   const [stage, setStage] = useState<Stage>('dropzone');
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
@@ -309,9 +337,12 @@ export function WorkspaceView({
     statsHtml?: string;
   } | null>(null);
 
+  const [canvasWrapWidth, setCanvasWrapWidth] = useState(0);
+
   // Refs
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const secondCompareInputRef = useRef<HTMLInputElement | null>(null);
+  const canvasWrapRef = useRef<HTMLDivElement | null>(null);
   const pdfRenderCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const pdfOverlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const compareCanvas1Ref = useRef<HTMLCanvasElement | null>(null);
@@ -432,7 +463,23 @@ export function WorkspaceView({
       const incoming = Array.from(incomingList);
       if (incoming.length === 0) return;
 
+      if (checkUserQuota) {
+        const filesToCheck = tool.multiple
+          ? [...docStateRef.current.files.map((f) => f.file), ...incoming]
+          : [incoming[0]];
+        const quotaRes = checkUserQuota({
+          tool,
+          files: filesToCheck,
+          compressLevel,
+        });
+        if (!quotaRes.allowed) {
+          onQuotaBlocked?.(quotaRes);
+          return;
+        }
+      }
+
       setIsLoadingFiles(true);
+      onGlobalProgress?.(15, 'Chargement des fichiers PDF...');
       try {
         if (tool.id === 'html2pdf') {
           const text = await incoming[0].text();
@@ -530,9 +577,18 @@ export function WorkspaceView({
         setStage('editor');
       } finally {
         setIsLoadingFiles(false);
+        onGlobalProgress?.(null);
       }
     },
-    [tool.id, tool.multiple, onNotify, resetDocState, setDocState]
+    [
+      tool,
+      compressLevel,
+      checkUserQuota,
+      onQuotaBlocked,
+      onNotify,
+      resetDocState,
+      setDocState,
+    ]
   );
 
   // Consume global drag-and-drop files forwarded from App
@@ -730,6 +786,28 @@ export function WorkspaceView({
     }
   }, [tool.id, cropMargins, annotations, currentCanvasPage, signatureDataUrl, sigSize]);
 
+  // Observe interactive canvas wrapper width for responsive PDF scaling
+  useEffect(() => {
+    if (stage !== 'editor' || !INTERACTIVE_CANVAS_TOOLS.has(tool.id)) return;
+    const container = canvasWrapRef.current;
+    if (!container) return;
+
+    const updateWidth = () => {
+      const next = Math.round(container.clientWidth);
+      if (next > 0) {
+        setCanvasWrapWidth((prev) => (Math.abs(prev - next) >= 4 ? next : prev));
+      }
+    };
+    updateWidth();
+
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      updateWidth();
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [stage, tool.id]);
+
   // Render PDF page onto interactive base canvas
   useEffect(() => {
     if (stage !== 'editor' || !INTERACTIVE_CANVAS_TOOLS.has(tool.id)) return;
@@ -741,7 +819,12 @@ export function WorkspaceView({
     let cancelled = false;
     const renderPage = async () => {
       const page = await primaryDoc.getPage(currentCanvasPage);
-      const viewport = page.getViewport({ scale: 1.25 });
+      const baseViewport = page.getViewport({ scale: 1 });
+      const responsiveScale =
+        canvasWrapWidth > 0
+          ? Math.max(0.45, Math.min(1.4, (canvasWrapWidth - 12) / baseViewport.width))
+          : 1.25;
+      const viewport = page.getViewport({ scale: responsiveScale });
       if (cancelled) return;
       baseCanvas.width = Math.ceil(viewport.width);
       baseCanvas.height = Math.ceil(viewport.height);
@@ -754,7 +837,7 @@ export function WorkspaceView({
     return () => {
       cancelled = true;
     };
-  }, [stage, tool.id, files, currentCanvasPage, redrawOverlay]);
+  }, [stage, tool.id, files, currentCanvasPage, canvasWrapWidth, redrawOverlay]);
 
   // Redraw overlay whenever annotations or cropMargins change
   useEffect(() => {
@@ -1048,6 +1131,13 @@ export function WorkspaceView({
     }
   };
 
+  const handleOverlayCancel = () => {
+    if (drawStateRef.current.isDrawing) {
+      drawStateRef.current.isDrawing = false;
+      redrawOverlay();
+    }
+  };
+
   // Start Webcam scanner
   const startWebcamScanner = async () => {
     setStage('editor');
@@ -1159,6 +1249,22 @@ export function WorkspaceView({
 
   // Execute tool action
   const handleExecute = async () => {
+    const rawFiles = files.map((f) => f.file);
+    let shouldApplyWatermark = isWatermarked;
+
+    if (checkUserQuota) {
+      const quotaRes = checkUserQuota({
+        tool,
+        files: rawFiles,
+        compressLevel,
+      });
+      if (!quotaRes.allowed) {
+        onQuotaBlocked?.(quotaRes);
+        return;
+      }
+      shouldApplyWatermark = quotaRes.isWatermarked;
+    }
+
     if (tool.id === 'sign') {
       const totalPlaced = Object.values(annotations).reduce(
         (sum, list) => sum + list.length,
@@ -1175,10 +1281,12 @@ export function WorkspaceView({
 
     setStage('processing');
     setProgress(30);
+    onGlobalProgress?.(30, `Traitement en cours (${tool.title})...`);
 
     try {
       await new Promise((r) => setTimeout(r, 150));
       setProgress(65);
+      onGlobalProgress?.(65, 'Exécution des opérations PDF...');
 
       const execRes: ExecutionResult = await executePdfTool({
         toolId: tool.id,
@@ -1223,25 +1331,34 @@ export function WorkspaceView({
           aiOcrOutput,
           workflowSteps,
         },
-        onProgress: (pct) => setProgress(pct),
+        onProgress: (pct) => {
+          setProgress(pct);
+          onGlobalProgress?.(pct, `Traitement en cours... (${pct}%)`);
+        },
       });
 
+      const finalBlob = shouldApplyWatermark
+        ? await applyFreeTierPdfFooter(execRes.blob)
+        : execRes.blob;
+
       setProgress(100);
+      onGlobalProgress?.(100, 'Finalisation et compression...');
       await new Promise((r) => setTimeout(r, 150));
 
-      const sizeFormatted = formatBytes(execRes.blob.size);
-      const url = URL.createObjectURL(execRes.blob);
+      const sizeFormatted = formatBytes(finalBlob.size);
+      const url = URL.createObjectURL(finalBlob);
       setResult((prev) => {
         if (prev?.url) URL.revokeObjectURL(prev.url);
         return {
           url,
-          blob: execRes.blob,
+          blob: finalBlob,
           fileName: execRes.fileName,
           sizeFormatted,
           btnText: execRes.btnText,
           statsHtml: execRes.statsHtml,
         };
       });
+      await onQuotaConsumed?.(tool.id, rawFiles);
       onFileProcessed({
         fileName: execRes.fileName,
         toolId: tool.id,
@@ -1250,7 +1367,9 @@ export function WorkspaceView({
       });
       setStage('result');
       onNotify('Traitement terminé avec succès !', 'success');
+      onGlobalProgress?.(null);
     } catch (err) {
+      onGlobalProgress?.(null);
       const message =
         err instanceof Error ? err.message : 'Erreur lors du traitement du fichier.';
       onNotify(message, 'error');
@@ -1264,7 +1383,7 @@ export function WorkspaceView({
   return (
     <section className="flex-grow flex flex-col">
       {/* Barre supérieure contextuelle */}
-      <div className="bg-white dark:bg-brand-cardDark border-b border-neutral-200 dark:border-brand-borderDark px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+      <div className="bg-white dark:bg-brand-cardDark border-b border-neutral-200 dark:border-brand-borderDark px-3 sm:px-6 py-2.5 flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 sm:gap-4">
         <button
           type="button"
           onClick={() => {
@@ -1272,29 +1391,30 @@ export function WorkspaceView({
             stopWebcam();
             onGoHome();
           }}
-          className="inline-flex items-center gap-2 text-sm font-bold text-neutral-600 dark:text-neutral-300 hover:text-brand-red transition-colors whitespace-nowrap shrink-0"
+          className="inline-flex items-center gap-1.5 min-h-[40px] px-1.5 text-xs sm:text-sm font-bold text-neutral-600 dark:text-neutral-300 hover:text-brand-red transition-colors whitespace-nowrap shrink-0"
         >
           <ArrowLeft className="w-4 h-4" />
-          <span>Tous les outils</span>
+          <span className="hidden min-[380px]:inline">Tous les outils</span>
+          <span className="min-[380px]:hidden">Retour</span>
         </button>
 
-        <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
           <span
             className={`w-8 h-8 rounded-lg flex items-center justify-center text-white shrink-0 ${tool.color}`}
           >
             <ToolIcon name={tool.icon} className="w-4 h-4" />
           </span>
           <div className="min-w-0">
-            <h1 className="text-sm sm:text-base font-extrabold text-neutral-900 dark:text-white leading-none truncate">
+            <h1 className="text-xs sm:text-base font-extrabold text-neutral-900 dark:text-white leading-tight truncate">
               {tool.title}
             </h1>
-            <p className="text-[11px] text-neutral-400 font-medium mt-0.5 truncate">
+            <p className="text-[11px] text-neutral-400 font-medium truncate hidden sm:block">
               {tool.catLabel}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2.5 shrink-0">
+        <div className="flex items-center justify-end gap-2 shrink-0">
           {stage === 'editor' && HISTORY_ENABLED_TOOLS.has(tool.id) && (
             <div className="inline-flex items-center rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/80 p-0.5">
               <button
@@ -1303,7 +1423,7 @@ export function WorkspaceView({
                 onClick={handleUndo}
                 title="Annuler (Ctrl+Z)"
                 aria-label="Annuler (Ctrl+Z)"
-                className="h-8 px-2 sm:px-2.5 rounded-lg text-neutral-700 dark:text-neutral-200 hover:bg-white dark:hover:bg-neutral-700 hover:text-brand-red disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-neutral-700 dark:disabled:hover:text-neutral-200 transition-colors inline-flex items-center gap-1.5 text-xs font-bold"
+                className="h-9 min-w-[36px] px-2 sm:px-2.5 rounded-lg text-neutral-700 dark:text-neutral-200 hover:bg-white dark:hover:bg-neutral-700 hover:text-brand-red disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-neutral-700 dark:disabled:hover:text-neutral-200 transition-colors inline-flex items-center justify-center gap-1.5 text-xs font-bold"
               >
                 <Undo2 className="w-4 h-4 shrink-0" />
                 <span className="hidden md:inline">Annuler</span>
@@ -1318,7 +1438,7 @@ export function WorkspaceView({
                 onClick={handleRedo}
                 title="Rétablir (Ctrl+Y)"
                 aria-label="Rétablir (Ctrl+Y)"
-                className="h-8 px-2 sm:px-2.5 rounded-lg text-neutral-700 dark:text-neutral-200 hover:bg-white dark:hover:bg-neutral-700 hover:text-brand-red disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-neutral-700 dark:disabled:hover:text-neutral-200 transition-colors inline-flex items-center gap-1.5 text-xs font-bold"
+                className="h-9 min-w-[36px] px-2 sm:px-2.5 rounded-lg text-neutral-700 dark:text-neutral-200 hover:bg-white dark:hover:bg-neutral-700 hover:text-brand-red disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-neutral-700 dark:disabled:hover:text-neutral-200 transition-colors inline-flex items-center justify-center gap-1.5 text-xs font-bold"
               >
                 <Redo2 className="w-4 h-4 shrink-0" />
                 <span className="hidden md:inline">Rétablir</span>
@@ -1329,10 +1449,10 @@ export function WorkspaceView({
             <button
               type="button"
               onClick={resetWorkspace}
-              className="text-xs font-bold text-brand-red hover:underline inline-flex items-center gap-1 whitespace-nowrap"
+              className="min-h-[36px] px-2 text-xs font-bold text-brand-red hover:underline inline-flex items-center gap-1 whitespace-nowrap"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Réinitialiser</span>
+              <span className="hidden sm:inline">Réinitialiser</span>
             </button>
           )}
         </div>
@@ -1374,9 +1494,9 @@ export function WorkspaceView({
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -12, scale: 0.99 }}
           transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-          className="flex-grow flex flex-col items-center justify-center p-6 text-center"
+          className="flex-grow flex flex-col items-center justify-center p-3 sm:p-6 text-center"
         >
-          <div className="w-full max-w-2xl bg-white dark:bg-brand-cardDark border-2 border-dashed border-neutral-300 dark:border-neutral-600 rounded-3xl p-8 sm:p-14 shadow-sm relative overflow-hidden">
+          <div className="w-full max-w-2xl bg-white dark:bg-brand-cardDark border-2 border-dashed border-neutral-300 dark:border-neutral-600 rounded-3xl p-5 sm:p-10 lg:p-14 shadow-sm relative overflow-hidden">
             <AnimatePresence>
               {isLoadingFiles && (
                 <motion.div
@@ -1417,6 +1537,23 @@ export function WorkspaceView({
               <p className="mt-4 text-xs text-neutral-400">
                 ou glissez-déposez vos fichiers n’importe où sur la fenêtre
               </p>
+              <div className="mt-3 inline-flex flex-wrap items-center justify-center gap-2 px-3 py-1.5 rounded-xl bg-neutral-100 dark:bg-neutral-800/80 text-[11px] font-semibold text-neutral-600 dark:text-neutral-300 tabular-nums">
+                <span>Max {maxFileMb} Mo / fichier</span>
+                <span>·</span>
+                <span>
+                  {maxBatchFiles >= 999
+                    ? 'Lots illimités'
+                    : `Max ${maxBatchFiles} fichier(s)`}
+                </span>
+                {dailyLimit !== null && remainingTasks !== null && (
+                  <>
+                    <span>·</span>
+                    <span className={remainingTasks === 0 ? 'text-brand-red font-extrabold' : ''}>
+                      {remainingTasks}/{dailyLimit} tâches restantes
+                    </span>
+                  </>
+                )}
+              </div>
               {onImportFromGmail && tool.accept.includes('.pdf') && (
                 <button
                   type="button"
@@ -1479,25 +1616,33 @@ export function WorkspaceView({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -12 }}
           transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-          className="flex-grow flex flex-col lg:flex-row overflow-hidden"
+          className={
+            tool.id === 'socialpost'
+              ? 'flex-grow flex flex-col lg:flex-row overflow-x-clip'
+              : 'flex-grow flex flex-col lg:grid lg:grid-cols-12 lg:items-start w-full overflow-x-clip'
+          }
         >
           {tool.id === 'socialpost' ? (
             <SocialPostStudio
               loadedFile={files[0] || null}
               onNotify={onNotify}
-              onExportRecorded={(fileName, sizeFormatted) =>
+              onExportRecorded={(fileName, sizeFormatted) => {
+                void onQuotaConsumed?.(
+                  tool.id,
+                  files.map((f) => f.file)
+                );
                 onFileProcessed({
                   fileName,
                   toolId: tool.id,
                   toolTitle: tool.title,
                   sizeFormatted,
-                })
-              }
+                });
+              }}
             />
           ) : (
             <>
           {/* Colonne Principale Gauche */}
-          <div className="flex-grow p-4 sm:p-6 lg:p-8 overflow-y-auto bg-brand-bgLight dark:bg-brand-bgDark">
+          <div className="w-full lg:col-span-8 min-w-0 p-3 sm:p-6 lg:p-8 bg-brand-bgLight dark:bg-brand-bgDark">
             {/* Barre d'info fichiers & ajout */}
             {tool.id !== 'scan2pdf' && tool.id !== 'html2pdf' && (
               <div className="max-w-6xl mx-auto mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -1538,7 +1683,7 @@ export function WorkspaceView({
 
             {/* 2A: Grille des fichiers */}
             {FILE_CARD_TOOLS.has(tool.id) && (
-              <div className="max-w-6xl mx-auto grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="max-w-6xl mx-auto grid grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
                 <AnimatePresence>
                   {files.map((item, idx) => (
                     <motion.div
@@ -1734,7 +1879,7 @@ export function WorkspaceView({
                 </div>
 
                 {tool.id === 'organizepages' ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
                     {pageOrder.map((entry, idx) => (
                       <div
                         key={`${entry.originalIndex}-${idx}`}
@@ -1791,7 +1936,7 @@ export function WorkspaceView({
                     ))}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
                     {pageThumbnails.map((thumb, idx) => {
                       const isSelected = selectedPages.has(idx);
                       const rot = pageRotations[idx] || 0;
@@ -1844,8 +1989,11 @@ export function WorkspaceView({
 
             {/* 2C: Éditeur Interactif sur Canvas PDF */}
             {INTERACTIVE_CANVAS_TOOLS.has(tool.id) && (
-              <div className="max-w-5xl mx-auto flex flex-col items-center">
-                <div className="w-full bg-white dark:bg-brand-cardDark p-3 rounded-xl border border-neutral-200 dark:border-brand-borderDark mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div
+                ref={canvasWrapRef}
+                className="max-w-5xl mx-auto w-full flex flex-col items-center"
+              >
+                <div className="w-full bg-white dark:bg-brand-cardDark p-3 rounded-xl border border-neutral-200 dark:border-brand-borderDark mb-4 flex flex-wrap items-center justify-between gap-2.5 sm:gap-3">
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
@@ -1853,7 +2001,8 @@ export function WorkspaceView({
                       onClick={() =>
                         setCurrentCanvasPage((p) => Math.max(1, p - 1))
                       }
-                      className="p-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+                      aria-label="Page précédente"
+                      className="min-w-[40px] min-h-[40px] p-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40 flex items-center justify-center"
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
@@ -1868,22 +2017,23 @@ export function WorkspaceView({
                           Math.min(totalInteractivePages, p + 1)
                         )
                       }
-                      className="p-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40"
+                      aria-label="Page suivante"
+                      className="min-w-[40px] min-h-[40px] p-2 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40 flex items-center justify-center"
                     >
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
                   <p className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
                     {tool.id === 'sign' &&
-                      'Créez votre signature à droite puis cliquez sur la page pour la placer'}
+                      'Créez votre signature ci-dessous / à droite puis touchez la page'}
                     {tool.id === 'redact' &&
-                      'Cliquez-glissez sur la page pour tracer une zone de caviardage noir opaque'}
+                      'Glissez sur la page pour tracer une zone de caviardage noir opaque'}
                     {tool.id === 'editpdf' &&
-                      'Cliquez sur la page pour ajouter du texte ou tracez un surlignage'}
+                      'Touchez la page pour ajouter du texte ou tracez un surlignage'}
                     {tool.id === 'crop' &&
-                      'Ajustez les marges de rognage dans le panneau de droite'}
+                      'Ajustez les marges de rognage dans le panneau d’options'}
                     {tool.id === 'pdfforms' &&
-                      'Choisissez le type de champ à droite puis cliquez sur la page pour l’ajouter'}
+                      'Choisissez le type de champ puis touchez la page pour l’ajouter'}
                   </p>
                   {tool.id !== 'crop' && (
                     <div className="flex items-center gap-3">
@@ -1901,7 +2051,7 @@ export function WorkspaceView({
                               },
                             }))
                           }
-                          className="text-xs font-bold text-neutral-600 dark:text-neutral-300 hover:text-brand-red"
+                          className="text-xs font-bold text-neutral-600 dark:text-neutral-300 hover:text-brand-red min-h-[36px] px-1"
                         >
                           Annuler le dernier
                         </button>
@@ -1917,7 +2067,7 @@ export function WorkspaceView({
                             },
                           }))
                         }
-                        className="text-xs font-bold text-red-600 hover:underline"
+                        className="text-xs font-bold text-red-600 hover:underline min-h-[36px] px-1"
                       >
                         Effacer cette page
                       </button>
@@ -1939,6 +2089,7 @@ export function WorkspaceView({
                     onTouchStart={handleOverlayStart}
                     onTouchMove={handleOverlayMove}
                     onTouchEnd={handleOverlayEnd}
+                    onTouchCancel={handleOverlayCancel}
                     className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
                   />
                 </div>
@@ -2131,9 +2282,9 @@ export function WorkspaceView({
           </div>
 
           {/* Colonne Latérale Droite : Panneau d'Options */}
-          <aside className="w-full lg:w-[380px] shrink-0 bg-white dark:bg-brand-cardDark border-t lg:border-t-0 lg:border-l border-neutral-200 dark:border-brand-borderDark flex flex-col justify-between z-20">
-            <div className="p-6 overflow-y-auto flex-grow">
-              <h2 className="text-xl font-extrabold text-neutral-900 dark:text-white pb-4 border-b border-neutral-200 dark:border-brand-borderDark mb-5 text-center">
+          <aside className="w-full lg:col-span-4 lg:sticky lg:top-16 bg-white dark:bg-brand-cardDark border-t lg:border-t-0 lg:border-l border-neutral-200 dark:border-brand-borderDark flex flex-col justify-between z-20 lg:min-h-[calc(100vh-4rem)]">
+            <div className="p-4 sm:p-6 overflow-y-auto flex-grow">
+              <h2 className="text-lg sm:text-xl font-extrabold text-neutral-900 dark:text-white pb-3.5 border-b border-neutral-200 dark:border-brand-borderDark mb-4 sm:mb-5 text-center">
                 {tool.title}
               </h2>
 
@@ -2314,55 +2465,81 @@ export function WorkspaceView({
                               title: 'Compression Extrême',
                               sub: 'Taille minimale (85 DPI), idéal pour l’envoi rapide.',
                               defaultQuality: 42,
+                              isProOnly: true,
                             },
                             {
                               val: 'recommended',
                               title: 'Compression Recommandée',
                               sub: 'Bon équilibre qualité / poids (125 DPI).',
                               defaultQuality: 68,
+                              isProOnly: false,
                             },
                             {
                               val: 'low',
                               title: 'Basse Compression',
                               sub: 'Haute netteté préservée (175 DPI).',
                               defaultQuality: 85,
+                              isProOnly: false,
                             },
                             {
                               val: 'lossless',
                               title: 'Structurelle (Sans perte)',
                               sub: 'Texte vectoriel intact + flux d’objets compressés.',
                               defaultQuality: 100,
+                              isProOnly: false,
                             },
                           ] as const
-                        ).map((opt) => (
-                          <label
-                            key={opt.val}
-                            className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
-                              compressLevel === opt.val
-                                ? 'border-2 border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20'
-                                : 'border-neutral-200 dark:border-neutral-700 hover:border-emerald-500'
-                            }`}
-                          >
-                            <input
-                              type="radio"
-                              name="compLevel"
-                              checked={compressLevel === opt.val}
-                              onChange={() => {
-                                setCompressLevel(opt.val);
-                                if (opt.val !== 'lossless') {
-                                  setCompressQuality(opt.defaultQuality);
-                                }
-                              }}
-                              className="mt-1 accent-emerald-600"
-                            />
-                            <div>
-                              <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                                {opt.title}
-                              </p>
-                              <p className="text-xs text-neutral-500">{opt.sub}</p>
-                            </div>
-                          </label>
-                        ))}
+                        ).map((opt) => {
+                          const locked = opt.isProOnly && !isPremiumOrTrial;
+                          return (
+                            <label
+                              key={opt.val}
+                              className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                                compressLevel === opt.val
+                                  ? 'border-2 border-emerald-500 bg-emerald-50/40 dark:bg-emerald-950/20'
+                                  : locked
+                                  ? 'border-amber-200 dark:border-amber-900/50 bg-amber-50/30 dark:bg-amber-950/10 hover:border-amber-400'
+                                  : 'border-neutral-200 dark:border-neutral-700 hover:border-emerald-500'
+                              }`}
+                            >
+                              <input
+                                type="radio"
+                                name="compLevel"
+                                checked={compressLevel === opt.val}
+                                onChange={() => {
+                                  if (locked && checkUserQuota) {
+                                    const res = checkUserQuota({
+                                      tool,
+                                      compressLevel: opt.val,
+                                    });
+                                    onQuotaBlocked?.(res);
+                                    return;
+                                  }
+                                  setCompressLevel(opt.val);
+                                  if (opt.val !== 'lossless') {
+                                    setCompressQuality(opt.defaultQuality);
+                                  }
+                                }}
+                                className="mt-1 accent-emerald-600"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-2">
+                                  <p className="text-sm font-bold text-emerald-600 dark:text-emerald-400">
+                                    {opt.title}
+                                  </p>
+                                  {locked && (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-400 text-neutral-900 text-[10px] font-extrabold shrink-0">
+                                      <Crown className="w-2.5 h-2.5" />
+                                      <Lock className="w-2.5 h-2.5" />
+                                      PRO
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-neutral-500">{opt.sub}</p>
+                              </div>
+                            </label>
+                          );
+                        })}
                       </div>
 
                       {compressLevel !== 'lossless' && (
@@ -3168,11 +3345,11 @@ export function WorkspaceView({
               </div>
             </div>
 
-            <div className="p-5 border-t border-neutral-200 dark:border-brand-borderDark bg-neutral-50 dark:bg-neutral-900/50">
+            <div className="sticky bottom-0 z-30 lg:static p-3 sm:p-5 border-t border-neutral-200 dark:border-brand-borderDark bg-white/95 dark:bg-brand-cardDark/95 backdrop-blur-md shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.16)] lg:shadow-none">
               <button
                 type="button"
                 onClick={handleExecute}
-                className="w-full bg-brand-red hover:bg-brand-redHover text-white font-bold text-base sm:text-lg py-4 px-6 rounded-2xl shadow-lg shadow-red-500/25 hover:shadow-red-500/40 transition-all flex items-center justify-center gap-3"
+                className="w-full min-h-[48px] bg-brand-red hover:bg-brand-redHover text-white font-bold text-base sm:text-lg py-3.5 px-6 rounded-2xl shadow-lg shadow-red-500/25 hover:shadow-red-500/40 transition-all flex items-center justify-center gap-3"
               >
                 <span>{tool.actionLabel}</span>
                 <ArrowRightCircle className="w-5 h-5" />
@@ -3223,9 +3400,9 @@ export function WorkspaceView({
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: -12, scale: 0.97 }}
           transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
-          className="flex-grow flex flex-col items-center justify-center p-6 text-center"
+          className="flex-grow flex flex-col items-center justify-center p-3 sm:p-6 text-center"
         >
-          <div className="w-full max-w-xl bg-white dark:bg-brand-cardDark rounded-3xl p-8 sm:p-10 shadow-2xl border border-neutral-200 dark:border-brand-borderDark">
+          <div className="w-full max-w-xl bg-white dark:bg-brand-cardDark rounded-3xl p-5 sm:p-10 shadow-2xl border border-neutral-200 dark:border-brand-borderDark">
             <div className="w-20 h-20 rounded-full bg-emerald-100 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto mb-5">
               <CheckCircle2 className="w-11 h-11" />
             </div>

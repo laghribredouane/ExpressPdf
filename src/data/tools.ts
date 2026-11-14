@@ -151,6 +151,7 @@ export const TOOLS: ToolDefinition[] = [
     multiple: false,
     btnText: 'Sélectionner un fichier PDF',
     actionLabel: 'Lancer la reconnaissance OCR',
+    isPro: true,
   },
 
   // 3. CONVERTIR EN PDF
@@ -295,6 +296,7 @@ export const TOOLS: ToolDefinition[] = [
     multiple: false,
     btnText: 'Sélectionner un fichier PDF',
     actionLabel: 'Convertir en PDF/A',
+    isPro: true,
   },
   {
     id: 'pdf2md',
@@ -453,6 +455,7 @@ export const TOOLS: ToolDefinition[] = [
     multiple: false,
     btnText: 'Sélectionner un fichier PDF',
     actionLabel: 'Appliquer la censure',
+    isPro: true,
   },
   {
     id: 'compare',
@@ -467,6 +470,7 @@ export const TOOLS: ToolDefinition[] = [
     multiple: false,
     btnText: 'Sélectionner le 1ᵉʳ fichier PDF',
     actionLabel: 'Exporter le rapport PDF',
+    isPro: true,
   },
 
   // 7. INTELLIGENCE PDF
@@ -497,6 +501,7 @@ export const TOOLS: ToolDefinition[] = [
     multiple: false,
     btnText: 'Sélectionner un fichier PDF',
     actionLabel: 'Traduire le PDF',
+    isPro: true,
   },
   {
     id: 'aiocr',
@@ -511,6 +516,7 @@ export const TOOLS: ToolDefinition[] = [
     multiple: true,
     btnText: 'Sélectionner PDF ou images scannées',
     actionLabel: 'Lancer l’OCR avancé (IA)',
+    isPro: true,
   },
   {
     id: 'socialpost',

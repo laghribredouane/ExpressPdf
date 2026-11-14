@@ -12,7 +12,7 @@ export function InfoModal({ page, onClose, onSelectTool }: InfoModalProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[80] flex items-center justify-center p-2 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="info-modal-title"
@@ -21,7 +21,7 @@ export function InfoModal({ page, onClose, onSelectTool }: InfoModalProps) {
         onClick={onClose}
         className="fixed inset-0 bg-black/55 backdrop-blur-xs"
       />
-      <div className="relative z-10 w-full max-w-lg bg-white dark:bg-brand-cardDark rounded-2xl border border-neutral-200 dark:border-brand-borderDark shadow-2xl p-6 sm:p-8">
+      <div className="relative z-10 w-[95vw] sm:w-full max-w-lg max-h-[90dvh] overflow-y-auto bg-white dark:bg-brand-cardDark rounded-2xl border border-neutral-200 dark:border-brand-borderDark shadow-2xl p-5 sm:p-8">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-brand-red mb-1">

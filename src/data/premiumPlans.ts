@@ -9,11 +9,25 @@ export interface CurrencyConfig {
   beneficiary: string;
   accountLabel: string;
   accountNumber: string;
+  iban: string;
   secondaryLabel: string;
   secondaryCode: string;
+  bankAgency: string;
   bankAddress: string;
+  agencyPhone: string;
   processingDelay: string;
 }
+
+const CIH_BANK_COMMON = {
+  bankName: 'CIH BANK',
+  beneficiary: 'RIDOUAN LAGHRIB',
+  rib: '230 480 2791812211019600 43',
+  iban: 'MA64 2304 8027 9181 2211 0196 0043',
+  bicSwift: 'CIHMMAMC',
+  bankAgency: 'MEKNES AL BASSATINE',
+  bankAddress: 'LOTISSMT ALEM 5, LOT5 AL BASSATINE MEKNES',
+  agencyPhone: '4747',
+};
 
 export const CURRENCIES: Record<CurrencyCode, CurrencyConfig> = {
   MAD: {
@@ -21,42 +35,51 @@ export const CURRENCIES: Record<CurrencyCode, CurrencyConfig> = {
     label: 'Dirham Marocain (MAD)',
     shortLabel: 'MAD',
     symbol: 'MAD',
-    bankName: 'Attijariwafa Bank — Centre d’Affaires',
-    beneficiary: 'PDFEXPRESS DIGITAL SARL',
-    accountLabel: 'RIB National (24 chiffres)',
-    accountNumber: '007 780 0004521000308912 45',
-    secondaryLabel: 'Code SWIFT / BIC',
-    secondaryCode: 'BCMAMAMC',
-    bankAddress: '2 Boulevard Moulay Youssef, Casablanca 20000, Maroc',
-    processingDelay: '24 h ouvrées (virement national instantané ou standard)',
+    bankName: `${CIH_BANK_COMMON.bankName} — ${CIH_BANK_COMMON.bankAgency}`,
+    beneficiary: CIH_BANK_COMMON.beneficiary,
+    accountLabel: 'R.I.B. National (24 chiffres)',
+    accountNumber: CIH_BANK_COMMON.rib,
+    iban: CIH_BANK_COMMON.iban,
+    secondaryLabel: 'Code B.I.C / SWIFT',
+    secondaryCode: CIH_BANK_COMMON.bicSwift,
+    bankAgency: CIH_BANK_COMMON.bankAgency,
+    bankAddress: CIH_BANK_COMMON.bankAddress,
+    agencyPhone: CIH_BANK_COMMON.agencyPhone,
+    processingDelay: 'Virement national CIH / Maroc (instantané ou 24 h ouvrées)',
   },
   USD: {
     code: 'USD',
     label: 'Dollar Américain (DOLLAR)',
     shortLabel: 'DOLLAR ($)',
     symbol: '$',
-    bankName: 'Citibank N.A. — International Wire',
-    beneficiary: 'PDFEXPRESS DIGITAL INC.',
-    accountLabel: 'Numéro de compte / IBAN USD',
-    accountNumber: 'US89 0210 0002 1845 9031 77',
-    secondaryLabel: 'SWIFT / BIC & Routing ABA',
-    secondaryCode: 'CITIUS33 · ABA 021000089',
-    bankAddress: '388 Greenwich Street, New York, NY 10013, USA',
-    processingDelay: '1 à 3 jours ouvrés (virement SWIFT / ACH)',
+    bankName: `${CIH_BANK_COMMON.bankName} — ${CIH_BANK_COMMON.bankAgency}`,
+    beneficiary: CIH_BANK_COMMON.beneficiary,
+    accountLabel: 'I.B.A.N. International',
+    accountNumber: CIH_BANK_COMMON.iban,
+    iban: CIH_BANK_COMMON.iban,
+    secondaryLabel: 'Code B.I.C / SWIFT',
+    secondaryCode: CIH_BANK_COMMON.bicSwift,
+    bankAgency: CIH_BANK_COMMON.bankAgency,
+    bankAddress: `${CIH_BANK_COMMON.bankAddress}, Maroc`,
+    agencyPhone: CIH_BANK_COMMON.agencyPhone,
+    processingDelay: 'Virement international SWIFT en USD (1 à 3 jours ouvrés)',
   },
   EUR: {
     code: 'EUR',
-    label: 'Euro Zone SEPA (EURO)',
+    label: 'Euro (EURO)',
     shortLabel: 'EURO (€)',
     symbol: '€',
-    bankName: 'BNP Paribas — Pôle Entreprises Europe',
-    beneficiary: 'PDFEXPRESS EUROPE SAS',
-    accountLabel: 'IBAN SEPA (EUR)',
-    accountNumber: 'FR76 3000 4008 1200 0104 9281 432',
-    secondaryLabel: 'Code BIC / SWIFT',
-    secondaryCode: 'BNPAFRPPXXX',
-    bankAddress: '16 Boulevard des Italiens, 75009 Paris, France',
-    processingDelay: 'Instantané (SEPA Instant) ou 24 h ouvrées',
+    bankName: `${CIH_BANK_COMMON.bankName} — ${CIH_BANK_COMMON.bankAgency}`,
+    beneficiary: CIH_BANK_COMMON.beneficiary,
+    accountLabel: 'I.B.A.N. International',
+    accountNumber: CIH_BANK_COMMON.iban,
+    iban: CIH_BANK_COMMON.iban,
+    secondaryLabel: 'Code B.I.C / SWIFT',
+    secondaryCode: CIH_BANK_COMMON.bicSwift,
+    bankAgency: CIH_BANK_COMMON.bankAgency,
+    bankAddress: `${CIH_BANK_COMMON.bankAddress}, Maroc`,
+    agencyPhone: CIH_BANK_COMMON.agencyPhone,
+    processingDelay: 'Virement international SWIFT en EUR (1 à 3 jours ouvrés)',
   },
 };
 

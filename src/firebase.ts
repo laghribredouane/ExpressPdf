@@ -13,6 +13,7 @@ import {
 } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
+import { assertNonDisposableEmail } from './utils/disposableEmails';
 
 export const WORKSPACE_SCOPES = [
   'https://www.googleapis.com/auth/calendar',
@@ -107,6 +108,7 @@ export async function registerWithEmail(params: {
   if (!cleanEmail || !cleanEmail.includes('@')) {
     throw new Error('Veuillez saisir une adresse e-mail valide.');
   }
+  assertNonDisposableEmail(cleanEmail);
   if (params.password.length < 6) {
     throw new Error('Le mot de passe doit contenir au moins 6 caractères.');
   }
@@ -161,6 +163,9 @@ export async function resendEmailVerification(): Promise<void> {
 export async function refreshCurrentUser(): Promise<User | null> {
   if (!auth.currentUser) return null;
   await auth.currentUser.reload();
+  if (auth.currentUser.emailVerified) {
+    await auth.currentUser.getIdToken(true);
+  }
   return auth.currentUser;
 }
 

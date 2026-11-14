@@ -68,6 +68,7 @@ export interface ToolDefinition {
   multiple: boolean;
   btnText: string;
   actionLabel: string;
+  isPro?: boolean;
 }
 
 export interface LoadedFile {
@@ -229,4 +230,89 @@ export interface SocialSlide {
   title: string;
   body: string;
   cta: string;
+}
+
+export type SubscriptionStatus =
+  | 'free'
+  | 'trial_active'
+  | 'premium_active'
+  | 'expired'
+  | 'suspended';
+
+export type UserRole = 'user' | 'admin';
+
+export interface SaasUserProfile {
+  uid: string;
+  displayName: string;
+  photoURL?: string;
+  email: string;
+  emailVerified: boolean;
+  role: UserRole;
+  subscriptionStatus: SubscriptionStatus;
+  trialClaimed: boolean;
+  premiumExpiresAt: number; // 0 = unlimited if premium_active, else epoch ms
+  lastDeviceFingerprint?: string;
+  adminNote?: string;
+  createdAtMs?: number;
+  updatedAtMs?: number;
+}
+
+export interface UserDeviceRecord {
+  id: string;
+  userId: string;
+  deviceFingerprint: string;
+  userAgent: string;
+  os: string;
+  browser: string;
+  screenResolution: string;
+  lastIp: string;
+  firstUsedAtMs?: number;
+  lastSeenAtMs?: number;
+}
+
+export interface BannedDeviceRecord {
+  deviceFingerprint: string;
+  reason: string;
+  bannedByUid: string;
+  createdAtMs?: number;
+}
+
+export interface PremiumRequestRecord {
+  id: string;
+  userId: string;
+  reference: string;
+  planId: 'premium_pro' | 'premium_team';
+  planLabel: string;
+  cycle: BillingCycle;
+  currency: CurrencyCode;
+  amount: number;
+  formattedAmount: string;
+  payerName: string;
+  payerEmail: string;
+  bankOrigin?: string;
+  transferDate: string;
+  note?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  reviewedBy?: string;
+  createdAtMs?: number;
+}
+
+export interface QuotaCheckResult {
+  allowed: boolean;
+  reason?: string;
+  blockReasonCode?:
+    | 'banned_device'
+    | 'suspended_account'
+    | 'unverified_email'
+    | 'pro_tool_locked'
+    | 'daily_limit'
+    | 'file_size_limit'
+    | 'batch_limit';
+  requiresAuth?: boolean;
+  requiresUpgrade?: boolean;
+  maxFileMb: number;
+  maxBatchFiles: number;
+  dailyLimit: number | null;
+  remainingTasks: number | null;
+  isWatermarked: boolean;
 }

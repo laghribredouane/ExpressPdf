@@ -181,7 +181,7 @@ export function Footer({
           </div>
 
           {/* Sélecteur de langue */}
-          <div className="flex items-center gap-2 bg-neutral-800 border border-neutral-700 rounded-xl px-3 py-2">
+          <div className="flex items-center gap-2 bg-neutral-800 border border-neutral-700 rounded-xl px-3 py-2 min-h-[44px]">
             <Globe className="w-4 h-4 text-neutral-400" />
             <select
               value={language}
@@ -190,13 +190,13 @@ export function Footer({
               className="bg-transparent text-xs font-semibold text-white outline-none cursor-pointer"
             >
               <option value="fr" className="bg-neutral-900">
-                Français
+                Français (FR)
               </option>
               <option value="en" className="bg-neutral-900">
-                English
+                English (EN)
               </option>
-              <option value="es" className="bg-neutral-900">
-                Español
+              <option value="ar" className="bg-neutral-900">
+                العربية (AR)
               </option>
             </select>
           </div>

@@ -706,12 +706,12 @@ export function WorkspaceIntegrationsModal({
 
   return (
     <div
-      className="fixed inset-0 z-[85] flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-xs"
+      className="fixed inset-0 z-[85] flex items-center justify-center p-2 sm:p-6 bg-black/60 backdrop-blur-xs"
       role="dialog"
       aria-modal="true"
       aria-label="Google Calendar et Gmail"
     >
-      <div className="relative w-full max-w-5xl max-h-[90vh] bg-white dark:bg-brand-cardDark rounded-3xl shadow-2xl border border-neutral-200 dark:border-brand-borderDark flex flex-col overflow-hidden">
+      <div className="relative w-[95vw] sm:w-full max-w-5xl max-h-[90dvh] bg-white dark:bg-brand-cardDark rounded-3xl shadow-2xl border border-neutral-200 dark:border-brand-borderDark flex flex-col overflow-hidden">
         {/* Header */}
         <div className="px-5 sm:px-6 py-4 border-b border-neutral-200 dark:border-brand-borderDark flex items-center justify-between gap-3 bg-neutral-50/70 dark:bg-neutral-900/50">
           <div className="flex items-center gap-3 min-w-0">

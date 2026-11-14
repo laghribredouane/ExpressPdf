@@ -19,6 +19,7 @@ import {
 import { CATEGORIES, TOOLS } from '../data/tools';
 import type { CategoryId, CurrencyCode, ToolId } from '../types/pdf';
 import { ToolIcon } from './ToolIcon';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface HomeViewProps {
   activeCategory: CategoryId;
@@ -31,6 +32,8 @@ interface HomeViewProps {
   selectedCurrency: CurrencyCode;
   onCurrencyChange: (currency: CurrencyCode) => void;
   onOpenPremium: () => void;
+  onOpenPricing?: () => void;
+  isPremiumOrTrial?: boolean;
 }
 
 export function HomeView({
@@ -44,6 +47,8 @@ export function HomeView({
   selectedCurrency,
   onCurrencyChange,
   onOpenPremium,
+  onOpenPricing,
+  isPremiumOrTrial = false,
 }: HomeViewProps) {
   const normalizedQuery = searchQuery.toLowerCase().trim();
   const filteredTools = TOOLS.filter((t) => {
@@ -65,29 +70,29 @@ export function HomeView({
       {/* Hero Section */}
       <section
         id="hero-top"
-        className="scroll-mt-20 pt-10 pb-6 px-4 sm:px-6 lg:px-8 max-w-5xl mx-auto text-center w-full"
+        className="scroll-mt-20 pt-8 sm:pt-10 pb-5 px-3 sm:px-6 lg:px-8 w-full max-w-7xl mx-auto text-center"
       >
-        <h1 className="text-3xl sm:text-4xl lg:text-[42px] font-extrabold text-neutral-900 dark:text-white tracking-tight leading-[1.15] mb-4 [text-wrap:balance]">
+        <h1 className="text-2xl sm:text-3xl lg:text-5xl font-extrabold text-neutral-900 dark:text-white tracking-tight leading-[1.15] mb-4 max-w-4xl mx-auto [text-wrap:balance]">
           Tous les outils nécessaires pour travailler sur vos PDF, en un seul endroit
         </h1>
-        <p className="text-base sm:text-lg text-neutral-600 dark:text-neutral-400 max-w-3xl mx-auto leading-relaxed">
+        <p className="text-sm sm:text-base lg:text-lg text-neutral-600 dark:text-neutral-400 max-w-3xl mx-auto leading-relaxed">
           Tous les outils dont vous avez besoin pour utiliser les PDF, à portée de main. Ils sont tous 100 % gratuits et simples d’utilisation : fusionnez, divisez, compressez, convertissez, faites pivoter, déverrouillez, signez et résumez vos PDF en quelques clics.
         </p>
 
-        {/* Recherche mobile */}
-        <div className="mt-6 sm:hidden max-w-md mx-auto relative">
+        {/* Recherche mobile & tablette */}
+        <div className="mt-5 xl:hidden max-w-md mx-auto relative">
           <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder={`Rechercher parmi les ${TOOLS.length} outils...`}
-            className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-white dark:bg-brand-cardDark border border-neutral-200 dark:border-brand-borderDark text-sm outline-none focus:border-brand-red"
+            className="w-full min-h-[44px] pl-10 pr-4 py-2.5 rounded-xl bg-white dark:bg-brand-cardDark border border-neutral-200 dark:border-brand-borderDark text-sm outline-none focus:border-brand-red"
           />
         </div>
 
-        {/* Barre de filtres par catégorie */}
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
+        {/* Barre de filtres par catégorie (défilement tactile horizontal sur mobile/tablette, centrée multi-lignes sur PC) */}
+        <div className="mt-7 flex lg:flex-wrap lg:justify-center items-center overflow-x-auto no-scrollbar whitespace-nowrap gap-2 pb-2">
           {CATEGORIES.map((cat) => {
             const active = activeCategory === cat.id;
             return (
@@ -95,7 +100,7 @@ export function HomeView({
                 key={cat.id}
                 type="button"
                 onClick={() => onCategoryChange(cat.id)}
-                className={`px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                className={`min-h-[44px] px-4 py-2 rounded-full text-xs sm:text-sm font-semibold transition-colors whitespace-nowrap shrink-0 ${
                   active
                     ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 shadow-sm'
                     : 'bg-white dark:bg-brand-cardDark text-neutral-700 dark:text-neutral-300 border border-neutral-200 dark:border-brand-borderDark hover:border-brand-red'
@@ -111,7 +116,7 @@ export function HomeView({
       {/* Grille des outils */}
       <section
         id="tools-catalog"
-        className="scroll-mt-20 pb-16 pt-4 px-4 sm:px-6 lg:px-8 max-w-[1380px] mx-auto w-full"
+        className="scroll-mt-20 pb-14 pt-3 px-3 sm:px-6 lg:px-8 w-full max-w-7xl mx-auto"
       >
         {filteredTools.length === 0 ? (
           <div className="text-center py-16">
@@ -122,53 +127,84 @@ export function HomeView({
             <button
               type="button"
               onClick={onResetFilters}
-              className="mt-3 text-sm font-bold text-brand-red hover:underline"
+              className="mt-3 min-h-[44px] px-4 text-sm font-bold text-brand-red hover:underline"
             >
               Afficher tous les outils
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-            {filteredTools.map((t) => {
-              const isWorkflow = t.id === 'workflow';
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => onSelectTool(t.id)}
-                  className={`tool-card text-left rounded-2xl p-5 border cursor-pointer flex flex-col justify-between group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-red ${
-                    isWorkflow
-                      ? 'bg-neutral-100/90 dark:bg-neutral-800/70 border-neutral-200 dark:border-neutral-700 hover:border-brand-red'
-                      : 'bg-white dark:bg-brand-cardDark border-neutral-200/80 dark:border-brand-borderDark hover:border-neutral-300 dark:hover:border-neutral-600 hover:shadow-lg'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-2 mb-4">
-                      <div
-                        className={`w-11 h-11 rounded-xl ${t.badge} flex items-center justify-center group-hover:scale-105 transition-transform shrink-0`}
-                      >
-                        <ToolIcon name={t.icon} className="w-5 h-5" />
+          <div className="grid grid-cols-1 min-[420px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 items-stretch">
+            <AnimatePresence mode="popLayout">
+              {filteredTools.map((t, index) => {
+                const isWorkflow = t.id === 'workflow';
+                return (
+                  <motion.button
+                    key={t.id}
+                    layout
+                    initial={{ opacity: 0, scale: 0.92, y: 16 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.9, y: -10 }}
+                    transition={{
+                      duration: 0.28,
+                      delay: Math.min(index * 0.02, 0.2),
+                      ease: [0.16, 1, 0.3, 1],
+                    }}
+                    whileHover={{
+                      scale: 1.03,
+                      y: -4,
+                      transition: { type: 'spring', stiffness: 450, damping: 18 },
+                    }}
+                    whileTap={{ scale: 0.98 }}
+                    type="button"
+                    onClick={() => onSelectTool(t.id)}
+                    className={`tool-card h-full min-h-[168px] text-left rounded-2xl p-4 sm:p-5 border cursor-pointer flex flex-col justify-between group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-red ${
+                      isWorkflow
+                        ? 'bg-neutral-100/90 dark:bg-neutral-800/70 border-neutral-200 dark:border-neutral-700 hover:border-brand-red'
+                        : 'bg-white dark:bg-brand-cardDark border-neutral-200/80 dark:border-brand-borderDark hover:border-neutral-300 dark:hover:border-neutral-600 hover:shadow-xl'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2 mb-4">
+                        <div
+                          className={`w-11 h-11 rounded-xl ${t.badge} flex items-center justify-center group-hover:scale-105 transition-transform shrink-0`}
+                        >
+                          <ToolIcon name={t.icon} className="w-5 h-5" />
+                        </div>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {t.isPro && (
+                            <span
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider shrink-0 ${
+                                isPremiumOrTrial
+                                  ? 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300'
+                                  : 'bg-amber-400/90 text-neutral-900'
+                              }`}
+                            >
+                              <Crown className="w-3 h-3" />
+                              <span>PRO</span>
+                            </span>
+                          )}
+                          <span className="text-[11px] font-medium text-neutral-400 dark:text-neutral-500 truncate">
+                            {t.catLabel}
+                          </span>
+                        </div>
                       </div>
-                      <span className="text-[11px] font-medium text-neutral-400 dark:text-neutral-500 truncate">
-                        {t.catLabel}
-                      </span>
+                      <h2 className="text-base font-bold text-neutral-900 dark:text-white mb-1.5 group-hover:text-brand-red transition-colors">
+                        {t.title}
+                      </h2>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed line-clamp-3">
+                        {t.desc}
+                      </p>
                     </div>
-                    <h2 className="text-base font-bold text-neutral-900 dark:text-white mb-1.5 group-hover:text-brand-red transition-colors">
-                      {t.title}
-                    </h2>
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed line-clamp-3">
-                      {t.desc}
-                    </p>
-                  </div>
-                  {isWorkflow && (
-                    <div className="mt-4 pt-3 border-t border-neutral-200 dark:border-neutral-700 flex items-center gap-1 text-xs font-bold text-neutral-800 dark:text-neutral-100 group-hover:text-brand-red">
-                      <span>Créer un flux de travail</span>
-                      <ArrowUpRight className="w-3.5 h-3.5" />
-                    </div>
-                  )}
-                </button>
-              );
-            })}
+                    {isWorkflow && (
+                      <div className="mt-4 pt-3 border-t border-neutral-200 dark:border-neutral-700 flex items-center gap-1 text-xs font-bold text-neutral-800 dark:text-neutral-100 group-hover:text-brand-red">
+                        <span>Créer un flux de travail</span>
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                      </div>
+                    )}
+                  </motion.button>
+                );
+              })}
+            </AnimatePresence>
           </div>
         )}
       </section>
@@ -176,12 +212,12 @@ export function HomeView({
       {/* Section : Travaillez à votre façon */}
       <section
         id="work-your-way"
-        className="scroll-mt-20 py-14 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto w-full border-t border-neutral-200/80 dark:border-brand-borderDark"
+        className="scroll-mt-20 py-14 px-3 sm:px-6 lg:px-8 w-full max-w-7xl mx-auto border-t border-neutral-200/80 dark:border-brand-borderDark"
       >
         <h2 className="text-2xl sm:text-3xl font-extrabold text-center text-neutral-900 dark:text-white mb-10">
           Travaillez à votre façon
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6">
           <button
             type="button"
             onClick={() => onOpenInfoPage('desktop')}
@@ -250,7 +286,7 @@ export function HomeView({
       {/* Section : Allez plus loin avec Premium + Édition d'images */}
       <section
         id="premium-section"
-        className="scroll-mt-20 py-10 px-4 sm:px-6 lg:px-8 max-w-6xl mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-6"
+        className="scroll-mt-20 py-10 px-3 sm:px-6 lg:px-8 w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-6"
       >
         <div className="rounded-3xl bg-amber-50/90 dark:bg-amber-950/25 border border-amber-200/80 dark:border-amber-900/40 p-7 sm:p-8 flex flex-col justify-between">
           <div>
@@ -331,15 +367,24 @@ export function HomeView({
               </li>
             </ul>
           </div>
-          <div>
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={onOpenPremium}
               className="w-full sm:w-auto px-6 py-3 rounded-xl bg-amber-400 hover:bg-amber-500 text-neutral-900 font-bold text-sm inline-flex items-center justify-center gap-2 transition-colors"
             >
               <Crown className="w-4 h-4" />
-              <span>Passer à Premium par virement</span>
+              <span>Demander l’activation Premium</span>
             </button>
+            {onOpenPricing && (
+              <button
+                type="button"
+                onClick={onOpenPricing}
+                className="w-full sm:w-auto px-5 py-3 rounded-xl bg-white/90 dark:bg-neutral-900 border border-amber-300 dark:border-amber-800 text-neutral-800 dark:text-neutral-100 font-bold text-sm hover:border-brand-red transition-colors"
+              >
+                Voir tous les tarifs
+              </button>
+            )}
           </div>
         </div>
 

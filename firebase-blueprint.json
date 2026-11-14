@@ -2,7 +2,7 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Profil utilisateur racine permettant de rattacher l'historique cloud.",
+      "description": "Profil utilisateur SaaS racine contenant le statut d'abonnement, la date d'expiration Premium et l'empreinte appareil.",
       "type": "object",
       "properties": {
         "uid": {
@@ -23,6 +23,46 @@
           "maxLength": 512,
           "description": "URL de l'avatar utilisateur."
         },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "Adresse e-mail de l'utilisateur."
+        },
+        "emailVerified": {
+          "type": "boolean",
+          "description": "Indique si l'adresse e-mail a été confirmée."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "admin"],
+          "description": "Rôle applicatif de l'utilisateur."
+        },
+        "subscriptionStatus": {
+          "type": "string",
+          "enum": ["free", "trial_active", "premium_active", "expired", "suspended"],
+          "description": "Statut d'abonnement courant."
+        },
+        "trialClaimed": {
+          "type": "boolean",
+          "description": "Indique si l'essai gratuit 7 jours a déjà été attribué."
+        },
+        "premiumExpiresAt": {
+          "type": "number",
+          "description": "Horodatage en millisecondes d'expiration (0 = illimité si premium_active, sinon aucun droit actif)."
+        },
+        "lastDeviceFingerprint": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Dernière empreinte matérielle détectée."
+        },
+        "adminNote": {
+          "type": "string",
+          "maxLength": 300,
+          "description": "Note interne de l'administrateur."
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time",
@@ -38,7 +78,7 @@
     },
     "UserPrivateInfo": {
       "title": "UserPrivateInfo",
-      "description": "Informations personnelles isolées (email) accessibles uniquement par le propriétaire.",
+      "description": "Informations personnelles isolées (email) accessibles uniquement par le propriétaire ou l'administrateur.",
       "type": "object",
       "properties": {
         "uid": {
@@ -53,7 +93,7 @@
           "format": "email",
           "minLength": 3,
           "maxLength": 254,
-          "description": "Adresse e-mail vérifiée de l'utilisateur."
+          "description": "Adresse e-mail de l'utilisateur."
         },
         "createdAt": {
           "type": "string",
@@ -77,49 +117,41 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$",
-          "description": "Identifiant unique de l'entrée d'historique."
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
         "userId": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$",
-          "description": "UID du propriétaire."
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
         "fileName": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 255,
-          "description": "Nom du fichier généré ou traité."
+          "maxLength": 255
         },
         "toolId": {
           "type": "string",
           "minLength": 1,
           "maxLength": 40,
-          "pattern": "^[a-z0-9_\\-]+$",
-          "description": "Identifiant technique de l'outil PDFExpress utilisé."
+          "pattern": "^[a-z0-9_\\-]+$"
         },
         "toolTitle": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 120,
-          "description": "Libellé de l'outil affiché dans l'historique."
+          "maxLength": 120
         },
         "sizeFormatted": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 40,
-          "description": "Taille formatée du fichier résultant."
+          "maxLength": 40
         },
         "processedAt": {
-          "type": "number",
-          "description": "Horodatage numérique en millisecondes du traitement."
+          "type": "number"
         },
         "createdAt": {
           "type": "string",
-          "format": "date-time",
-          "description": "Horodatage serveur Firestore."
+          "format": "date-time"
         }
       },
       "required": [
@@ -132,20 +164,341 @@
         "processedAt",
         "createdAt"
       ]
+    },
+    "DeviceTrialLock": {
+      "title": "DeviceTrialLock",
+      "description": "Verrou anti-abus garantissant 1 seul essai Premium de 7 jours par empreinte matérielle.",
+      "type": "object",
+      "properties": {
+        "deviceFingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "claimedByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "claimedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["deviceFingerprint", "claimedByUid", "claimedAt"]
+    },
+    "UserDeviceRecord": {
+      "title": "UserDeviceRecord",
+      "description": "Historique des appareils liés à chaque compte utilisateur.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "deviceFingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userAgent": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "os": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "browser": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "screenResolution": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "lastIp": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "firstUsedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastSeenAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "deviceFingerprint",
+        "userAgent",
+        "os",
+        "browser",
+        "screenResolution",
+        "lastIp",
+        "firstUsedAt",
+        "lastSeenAt"
+      ]
+    },
+    "UsageLogEntry": {
+      "title": "UsageLogEntry",
+      "description": "Journal d'exécution d'outils PDF servant au calcul du quota glissant sur 24 heures.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "deviceFingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "toolId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "pattern": "^[a-z0-9_\\-]+$"
+        },
+        "fileCount": {
+          "type": "number"
+        },
+        "totalBytes": {
+          "type": "number"
+        },
+        "createdAtMs": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "deviceFingerprint",
+        "toolId",
+        "fileCount",
+        "totalBytes",
+        "createdAtMs",
+        "createdAt"
+      ]
+    },
+    "PremiumRequest": {
+      "title": "PremiumRequest",
+      "description": "Demande d'activation manuelle Premium soumise par un client après virement bancaire ou contact.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "planId": {
+          "type": "string",
+          "enum": ["premium_pro", "premium_team"]
+        },
+        "planLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "cycle": {
+          "type": "string",
+          "enum": ["monthly", "annual"]
+        },
+        "currency": {
+          "type": "string",
+          "enum": ["MAD", "USD", "EUR"]
+        },
+        "amount": {
+          "type": "number"
+        },
+        "formattedAmount": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "payerName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "payerEmail": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "bankOrigin": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "transferDate": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"]
+        },
+        "reviewedBy": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "reference",
+        "planId",
+        "planLabel",
+        "cycle",
+        "currency",
+        "amount",
+        "formattedAmount",
+        "payerName",
+        "payerEmail",
+        "transferDate",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "BannedDevice": {
+      "title": "BannedDevice",
+      "description": "Empreinte matérielle bannie par l'administrateur pour abus.",
+      "type": "object",
+      "properties": {
+        "deviceFingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "bannedByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["deviceFingerprint", "reason", "bannedByUid", "createdAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Liste de contrôle des administrateurs autorisés.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        }
+      },
+      "required": ["uid"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "Profil utilisateur racine servant de document parent pour l'historique cloud."
+      "description": "Profil SaaS utilisateur avec statut d'abonnement et empreinte."
     },
     "/users/{userId}/private/{infoId}": {
       "schema": { "$ref": "#/entities/UserPrivateInfo" },
-      "description": "Données personnelles (email) isolées en sous-collection privée."
+      "description": "Données personnelles isolées (email)."
     },
     "/users/{userId}/history/{entryId}": {
       "schema": { "$ref": "#/entities/ProcessingHistoryEntry" },
-      "description": "Historique des traitements PDF sauvegardés dans le cloud pour un utilisateur."
+      "description": "Historique cloud des fichiers PDF traités."
+    },
+    "/device_trials/{deviceFingerprint}": {
+      "schema": { "$ref": "#/entities/DeviceTrialLock" },
+      "description": "Verrou anti-abus d'essai gratuit par empreinte appareil."
+    },
+    "/user_devices/{recordId}": {
+      "schema": { "$ref": "#/entities/UserDeviceRecord" },
+      "description": "Journal des appareils associés aux comptes."
+    },
+    "/usage_logs/{logId}": {
+      "schema": { "$ref": "#/entities/UsageLogEntry" },
+      "description": "Journaux d'utilisation PDF pour calcul du quota glissant 24h."
+    },
+    "/premium_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/PremiumRequest" },
+      "description": "Demandes d'activation Premium soumises par les utilisateurs."
+    },
+    "/banned_devices/{deviceFingerprint}": {
+      "schema": { "$ref": "#/entities/BannedDevice" },
+      "description": "Empreintes matérielles bannies pour abus."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Registre d'administrateurs."
     }
   }
 }

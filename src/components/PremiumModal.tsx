@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Building2,
   Check,
@@ -17,6 +17,7 @@ import {
   PREMIUM_PLANS,
   formatCurrencyAmount,
 } from '../data/premiumPlans';
+import { submitPremiumRequestToCloud } from '../services/saasService';
 import type {
   BankTransferSubmission,
   BillingCycle,
@@ -33,6 +34,12 @@ interface PremiumModalProps {
   onTransferSubmitted: (submission: BankTransferSubmission) => void;
   onResetTransfer: () => void;
   onNotify: (msg: string, type?: 'info' | 'success' | 'error') => void;
+  authUserId?: string | null;
+  defaultPayerName?: string | null;
+  defaultPayerEmail?: string | null;
+  initialPlanId?: 'premium_pro' | 'premium_team';
+  initialCycle?: BillingCycle;
+  onRequireAuth?: () => void;
 }
 
 function generateReference(): string {
@@ -50,20 +57,34 @@ export function PremiumModal({
   onTransferSubmitted,
   onResetTransfer,
   onNotify,
+  authUserId,
+  defaultPayerName,
+  defaultPayerEmail,
+  initialPlanId = 'premium_pro',
+  initialCycle = 'annual',
+  onRequireAuth,
 }: PremiumModalProps) {
   const [planId, setPlanId] = useState<'premium_pro' | 'premium_team'>(
-    'premium_pro'
+    initialPlanId
   );
-  const [cycle, setCycle] = useState<BillingCycle>('annual');
+  const [cycle, setCycle] = useState<BillingCycle>(initialCycle);
   const [reference, setReference] = useState<string>(() => generateReference());
-  const [payerName, setPayerName] = useState('');
-  const [payerEmail, setPayerEmail] = useState('');
+  const [payerName, setPayerName] = useState(defaultPayerName || '');
+  const [payerEmail, setPayerEmail] = useState(defaultPayerEmail || '');
   const [bankOrigin, setBankOrigin] = useState('');
   const [transferDate, setTransferDate] = useState<string>(() =>
     new Date().toISOString().slice(0, 10)
   );
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setPlanId(initialPlanId);
+    setCycle(initialCycle);
+    if (defaultPayerName && !payerName) setPayerName(defaultPayerName);
+    if (defaultPayerEmail && !payerEmail) setPayerEmail(defaultPayerEmail);
+  }, [isOpen, initialPlanId, initialCycle, defaultPayerName, defaultPayerEmail, payerName, payerEmail]);
 
   const selectedPlan =
     PREMIUM_PLANS.find((p) => p.id === planId) || PREMIUM_PLANS[0];
@@ -85,15 +106,21 @@ export function PremiumModal({
   };
 
   const handleCopyAllRib = () => {
-    const full = [
-      `Bénéficiaire : ${currencyInfo.beneficiary}`,
+    const lines = [
+      `Intitulé du compte / Bénéficiaire : ${currencyInfo.beneficiary}`,
       `Banque : ${currencyInfo.bankName}`,
       `${currencyInfo.accountLabel} : ${currencyInfo.accountNumber}`,
+    ];
+    if (currencyInfo.iban && currencyInfo.iban !== currencyInfo.accountNumber) {
+      lines.push(`I.B.A.N. : ${currencyInfo.iban}`);
+    }
+    lines.push(
       `${currencyInfo.secondaryLabel} : ${currencyInfo.secondaryCode}`,
+      `Adresse agence : ${currencyInfo.bankAddress} (Tél. : ${currencyInfo.agencyPhone})`,
       `Montant exact : ${formattedAmount}`,
-      `Référence obligatoire : ${reference}`,
-    ].join('\n');
-    handleCopy('all', full, 'RIB complet');
+      `Référence obligatoire : ${reference}`
+    );
+    handleCopy('all', lines.join('\n'), 'RIB complet');
   };
 
   const handleDownloadTransferPdf = async (sub?: BankTransferSubmission) => {
@@ -122,11 +149,15 @@ export function PremiumModal({
       `Reference unique de virement : ${targetRef}`,
       ``,
       `2. COORDONNEES BANCAIRES DU BENEFICIAIRE (${targetCurrency})`,
-      `Beneficiaire : ${targetCurrencyCfg.beneficiary}`,
+      `Intitule du compte : ${targetCurrencyCfg.beneficiary}`,
       `Etablissement bancaire : ${targetCurrencyCfg.bankName}`,
       `${targetCurrencyCfg.accountLabel} : ${targetCurrencyCfg.accountNumber}`,
+      ...(targetCurrencyCfg.iban !== targetCurrencyCfg.accountNumber
+        ? [`I.B.A.N. : ${targetCurrencyCfg.iban}`]
+        : []),
       `${targetCurrencyCfg.secondaryLabel} : ${targetCurrencyCfg.secondaryCode}`,
-      `Adresse banque : ${targetCurrencyCfg.bankAddress}`,
+      `Agence : ${targetCurrencyCfg.bankAgency} - Tel. : ${targetCurrencyCfg.agencyPhone}`,
+      `Adresse agence : ${targetCurrencyCfg.bankAddress}`,
       `Delai habituel : ${targetCurrencyCfg.processingDelay}`,
       ``,
       `3. INFORMATIONS EMETTEUR`,
@@ -198,9 +229,32 @@ export function PremiumModal({
           data.error || 'Impossible d’enregistrer le virement bancaire.'
         );
       }
+
+      if (authUserId) {
+        await submitPremiumRequestToCloud({
+          userId: authUserId,
+          reference: reference.trim(),
+          planId,
+          planLabel: selectedPlan.name,
+          cycle,
+          currency: selectedCurrency,
+          amount,
+          formattedAmount,
+          payerName: payerName.trim(),
+          payerEmail: payerEmail.trim(),
+          bankOrigin: bankOrigin.trim(),
+          transferDate,
+        });
+      } else if (onRequireAuth) {
+        onNotify(
+          'Virement noté localement. Connectez-vous pour l’associer à votre compte dans le tableau Admin.',
+          'info'
+        );
+      }
+
       onTransferSubmitted(data.submission);
       onNotify(
-        `Virement ${data.submission.reference} (${formattedAmount}) enregistré !`,
+        `Demande d'activation ${data.submission.reference} (${formattedAmount}) transmise !`,
         'success'
       );
     } catch (err) {
@@ -217,7 +271,7 @@ export function PremiumModal({
     <AnimatePresence>
       {isOpen && (
         <div
-          className="fixed inset-0 z-[85] flex items-center justify-center p-3 sm:p-5 overflow-y-auto"
+          className="fixed inset-0 z-[85] flex items-center justify-center p-2 sm:p-5 overflow-y-auto"
           role="dialog"
           aria-modal="true"
           aria-labelledby="premium-modal-title"
@@ -235,18 +289,18 @@ export function PremiumModal({
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 14, scale: 0.97 }}
             transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-            className="relative z-10 w-full max-w-4xl bg-white dark:bg-brand-cardDark rounded-3xl border border-neutral-200 dark:border-brand-borderDark shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col"
+            className="relative z-10 w-[95vw] sm:w-full max-w-4xl bg-white dark:bg-brand-cardDark rounded-3xl border border-neutral-200 dark:border-brand-borderDark shadow-2xl overflow-hidden my-auto max-h-[90dvh] flex flex-col"
           >
             {/* En-tête */}
-            <div className="px-6 py-5 border-b border-neutral-200 dark:border-brand-borderDark flex items-center justify-between gap-4 bg-amber-50/70 dark:bg-amber-950/20">
-              <div className="flex items-center gap-3">
+            <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-neutral-200 dark:border-brand-borderDark flex items-center justify-between gap-3 bg-amber-50/70 dark:bg-amber-950/20">
+              <div className="flex items-center gap-3 min-w-0">
                 <span className="w-10 h-10 rounded-xl bg-amber-400 text-neutral-900 flex items-center justify-center shrink-0">
                   <Crown className="w-5 h-5" />
                 </span>
-                <div>
+                <div className="min-w-0">
                   <h2
                     id="premium-modal-title"
-                    className="text-lg sm:text-xl font-extrabold text-neutral-900 dark:text-white"
+                    className="text-base sm:text-xl font-extrabold text-neutral-900 dark:text-white leading-tight"
                   >
                     PDFExpress Premium — Paiement par Virement Bancaire
                   </h2>
@@ -266,7 +320,7 @@ export function PremiumModal({
             </div>
 
             {/* Contenu défilant */}
-            <div className="p-6 overflow-y-auto space-y-6">
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-6">
               {activeTransfer ? (
                 <div className="rounded-2xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/60 dark:bg-emerald-950/20 p-6 space-y-5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -465,12 +519,12 @@ export function PremiumModal({
                         {[
                           {
                             key: 'beneficiary',
-                            label: 'Bénéficiaire',
+                            label: 'Intitulé du compte / Bénéficiaire',
                             value: currencyInfo.beneficiary,
                           },
                           {
                             key: 'bank',
-                            label: 'Banque',
+                            label: 'Banque & Agence',
                             value: currencyInfo.bankName,
                           },
                           {
@@ -479,11 +533,27 @@ export function PremiumModal({
                             value: currencyInfo.accountNumber,
                             mono: true,
                           },
+                          ...(currencyInfo.iban &&
+                          currencyInfo.iban !== currencyInfo.accountNumber
+                            ? [
+                                {
+                                  key: 'iban',
+                                  label: 'I.B.A.N.',
+                                  value: currencyInfo.iban,
+                                  mono: true,
+                                },
+                              ]
+                            : []),
                           {
                             key: 'swift',
                             label: currencyInfo.secondaryLabel,
                             value: currencyInfo.secondaryCode,
                             mono: true,
+                          },
+                          {
+                            key: 'agencyAddress',
+                            label: `Adresse agence (Tél. ${currencyInfo.agencyPhone})`,
+                            value: currencyInfo.bankAddress,
                           },
                           {
                             key: 'amount',
@@ -537,19 +607,29 @@ export function PremiumModal({
                         ))}
                       </div>
 
-                      <div className="flex items-center justify-between gap-2 pt-1 text-[11px] text-neutral-500">
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-neutral-500">
                         <span className="inline-flex items-center gap-1.5">
                           <Building2 className="w-3.5 h-3.5 shrink-0" />
                           <span>{currencyInfo.processingDelay}</span>
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => handleDownloadTransferPdf()}
-                          className="font-bold text-neutral-700 dark:text-neutral-200 hover:text-brand-red inline-flex items-center gap-1 shrink-0"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                          <span>RIB PDF</span>
-                        </button>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <a
+                            href="/assets/aistudio/Cih_67882995.pdf"
+                            download="RIB_CIH_BANK_RIDOUAN_LAGHRIB.pdf"
+                            className="font-bold text-neutral-700 dark:text-neutral-200 hover:text-brand-red inline-flex items-center gap-1"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>RIB CIH</span>
+                          </a>
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadTransferPdf()}
+                            className="font-bold text-neutral-700 dark:text-neutral-200 hover:text-brand-red inline-flex items-center gap-1"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            <span>Ordre PDF</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
 

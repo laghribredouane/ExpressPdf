@@ -1,19 +1,75 @@
 <!doctype html>
-<html lang="fr" class="light">
+<html lang="fr" class="light overflow-x-hidden max-w-full">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PDFExpress | Tous les outils PDF en ligne gratuits</title>
-    <meta name="description" content="Suite complète de 34 outils PDF gratuits dans votre navigateur : fusionner, diviser, compresser, convertir, signer, formulaires, flux de travail, OCR, résumé et traduction IA." />
-    <meta property="og:title" content="PDFExpress | Tous les outils PDF en ligne gratuits" />
-    <meta property="og:description" content="Tous les outils dont vous avez besoin pour travailler avec vos PDF en un seul endroit." />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#E5322D" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#141418" media="(prefers-color-scheme: dark)" />
+    <meta name="application-name" content="PDFExpress" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="PDFExpress" />
+    <meta name="format-detection" content="telephone=no" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <title>PDFExpress – 34 Outils PDF Gratuits &amp; IA en Ligne</title>
+    <meta name="description" content="Fusionnez, divisez, compressez, convertissez, signez et résumez vos PDF avec l’IA gratuitement dans votre navigateur, même hors ligne, avec PDFExpress." />
+    <meta name="keywords" content="PDF, fusionner PDF, diviser PDF, compresser PDF, convertir PDF, Word en PDF, PDF en JPG, signer PDF, OCR PDF, résumé IA PDF, PDFExpress" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+    <link rel="canonical" href="https://pdfexpress.app/" />
+    <link rel="sitemap" type="application/xml" title="Sitemap" href="/sitemap.xml" />
+
+    <!-- OpenGraph -->
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="PDFExpress" />
+    <meta property="og:locale" content="fr_FR" />
+    <meta property="og:title" content="PDFExpress – 34 Outils PDF Gratuits &amp; IA en Ligne" />
+    <meta property="og:description" content="Fusionnez, divisez, compressez, convertissez, signez et résumez vos PDF avec l’IA gratuitement dans votre navigateur, même hors ligne, avec PDFExpress." />
+    <meta property="og:image" content="/pwa-512x512.png" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+    <meta property="og:image:alt" content="PDFExpress – Suite complète d’outils PDF en ligne" />
+
+    <!-- Twitter / X Card -->
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="PDFExpress – 34 Outils PDF Gratuits &amp; IA en Ligne" />
+    <meta name="twitter:description" content="Fusionnez, divisez, compressez, convertissez, signez et résumez vos PDF avec l’IA gratuitement dans votre navigateur, même hors ligne." />
+    <meta name="twitter:image" content="/pwa-512x512.png" />
+
+    <!-- Schema.org Structured Data -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "PDFExpress",
+        "applicationCategory": "UtilitiesApplication",
+        "operatingSystem": "All",
+        "inLanguage": "fr",
+        "browserRequirements": "Requires JavaScript. Works offline with Service Worker.",
+        "description": "Suite complète de 34 outils PDF gratuits et assistants IA dans votre navigateur : fusionner, diviser, compresser, convertir, signer, OCR et résumer.",
+        "featureList": [
+          "Fusionner et diviser des fichiers PDF",
+          "Compresser et optimiser des PDF",
+          "Convertir Word, Excel, PowerPoint et images en PDF",
+          "Signer, annoter, censurer et remplir des formulaires PDF",
+          "OCR intelligent, résumé automatique et traduction IA de PDF",
+          "Fonctionnement hors ligne en Progressive Web App (PWA)"
+        ],
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "EUR"
+        }
+      }
+    </script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=Dancing+Script:wght@700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
   </head>
-  <body class="bg-brand-bgLight text-neutral-800 dark:bg-brand-bgDark dark:text-neutral-100 min-h-screen antialiased selection:bg-brand-red selection:text-white">
+  <body class="bg-brand-bgLight text-neutral-800 dark:bg-brand-bgDark dark:text-neutral-100 min-h-screen antialiased selection:bg-brand-red selection:text-white overflow-x-hidden max-w-full">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

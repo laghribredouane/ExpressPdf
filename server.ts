@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -391,6 +392,62 @@ app.post('/api/ai/social-post', async (req, res) => {
   }
 });
 
+const guestQuotaMap = new Map<string, { dateKey: string; count: number }>();
+
+function getClientIp(req: express.Request): string {
+  const fwd = req.headers['x-forwarded-for'];
+  const raw = Array.isArray(fwd)
+    ? fwd[0]
+    : typeof fwd === 'string'
+    ? fwd.split(',')[0]
+    : req.socket?.remoteAddress || 'unknown';
+  return String(raw || 'unknown').trim().slice(0, 64);
+}
+
+app.get('/api/device/client-info', (req, res) => {
+  res.json({
+    ip: getClientIp(req),
+    userAgent: String(req.headers['user-agent'] || '').slice(0, 300),
+  });
+});
+
+app.post('/api/quota/guest/status', (req, res) => {
+  const { deviceFingerprint = '' } = (req.body || {}) as {
+    deviceFingerprint?: string;
+  };
+  const today = new Date().toISOString().slice(0, 10);
+  const ip = getClientIp(req);
+  const keyFp = deviceFingerprint
+    ? `fp:${deviceFingerprint.slice(0, 80)}`
+    : `ip:${ip}`;
+  const entry = guestQuotaMap.get(keyFp);
+  const count = entry && entry.dateKey === today ? entry.count : 0;
+  res.json({ count, limit: 2, dateKey: today });
+});
+
+app.post('/api/quota/guest/consume', (req, res) => {
+  const { deviceFingerprint = '' } = (req.body || {}) as {
+    deviceFingerprint?: string;
+  };
+  const today = new Date().toISOString().slice(0, 10);
+  const ip = getClientIp(req);
+  const keyFp = deviceFingerprint
+    ? `fp:${deviceFingerprint.slice(0, 80)}`
+    : `ip:${ip}`;
+
+  if (guestQuotaMap.size > 5000) {
+    for (const [k, v] of guestQuotaMap.entries()) {
+      if (v.dateKey !== today) guestQuotaMap.delete(k);
+    }
+  }
+
+  const existing = guestQuotaMap.get(keyFp);
+  const nextCount =
+    existing && existing.dateKey === today ? existing.count + 1 : 1;
+  guestQuotaMap.set(keyFp, { dateKey: today, count: nextCount });
+  res.json({ count: nextCount, limit: 2, dateKey: today });
+});
+
 const bankTransfers: Array<Record<string, unknown>> = [];
 
 app.post('/api/billing/bank-transfer', (req, res) => {
@@ -448,6 +505,133 @@ app.post('/api/billing/bank-transfer', (req, res) => {
   if (bankTransfers.length > 100) bankTransfers.pop();
 
   res.json({ ok: true, submission: record });
+});
+
+const FALLBACK_TOOL_IDS = [
+  'merge',
+  'split',
+  'removepages',
+  'extractpages',
+  'organizepages',
+  'scan2pdf',
+  'compress',
+  'repair',
+  'ocr',
+  'jpg2pdf',
+  'word2pdf',
+  'ppt2pdf',
+  'excel2pdf',
+  'html2pdf',
+  'pdf2jpg',
+  'pdf2word',
+  'pdf2ppt',
+  'pdf2excel',
+  'pdf2pdfa',
+  'pdf2md',
+  'rotate',
+  'pagenumbers',
+  'watermark',
+  'crop',
+  'editpdf',
+  'pdfforms',
+  'unlock',
+  'protect',
+  'sign',
+  'redact',
+  'compare',
+  'aisummary',
+  'translatepdf',
+  'aiocr',
+  'socialpost',
+  'workflow',
+];
+
+function getDynamicToolIds(): string[] {
+  try {
+    const toolsFilePath = path.resolve(__dirname, 'src/data/tools.ts');
+    const source = fs.readFileSync(toolsFilePath, 'utf-8');
+    const toolsSection = source.split('export const TOOLS')[1] || source;
+    const matches = [...toolsSection.matchAll(/^\s*id:\s*'([a-z0-9_-]+)'/gm)];
+    const extracted = matches.map((m) => m[1]);
+    if (extracted.length > 0) {
+      return [...new Set(extracted)];
+    }
+  } catch {
+    // Fallback to static list when src is absent in minimal prod image
+  }
+  return FALLBACK_TOOL_IDS;
+}
+
+function getBaseUrl(req: express.Request): string {
+  const configured = process.env.APP_URL?.trim();
+  if (configured) {
+    return configured.replace(/\/+$/, '');
+  }
+  const protoHeader = req.headers['x-forwarded-proto'];
+  const proto =
+    (Array.isArray(protoHeader) ? protoHeader[0] : protoHeader)?.split(',')[0]?.trim() ||
+    req.protocol ||
+    'https';
+  const hostHeader = req.headers['x-forwarded-host'] || req.get('host');
+  const host =
+    (Array.isArray(hostHeader) ? hostHeader[0] : hostHeader)?.split(',')[0]?.trim() ||
+    `localhost:${PORT}`;
+  return `${proto}://${host}`;
+}
+
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+app.get('/robots.txt', (req, res) => {
+  const baseUrl = getBaseUrl(req);
+  res.type('text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.send(
+    [
+      'User-agent: *',
+      'Allow: /',
+      'Disallow: /api/',
+      'Disallow: /admin',
+      '',
+      `Sitemap: ${baseUrl}/sitemap.xml`,
+    ].join('\n')
+  );
+});
+
+app.get('/sitemap.xml', (req, res) => {
+  const baseUrl = getBaseUrl(req);
+  const lastmod = new Date().toISOString().slice(0, 10);
+  const toolIds = getDynamicToolIds();
+
+  const entries = [
+    { loc: `${baseUrl}/`, changefreq: 'daily', priority: '1.0' },
+    { loc: `${baseUrl}/tarifs`, changefreq: 'weekly', priority: '0.8' },
+    ...toolIds.map((id) => ({
+      loc: `${baseUrl}/?tool=${encodeURIComponent(id)}`,
+      changefreq: 'weekly',
+      priority: '0.9',
+    })),
+  ];
+
+  const xml = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ...entries.map(
+      (entry) =>
+        `  <url>\n    <loc>${escapeXml(entry.loc)}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${entry.changefreq}</changefreq>\n    <priority>${entry.priority}</priority>\n  </url>`
+    ),
+    '</urlset>',
+  ].join('\n');
+
+  res.type('application/xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=1800');
+  res.send(xml);
 });
 
 async function startServer() {
