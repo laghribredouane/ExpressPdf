@@ -1,0 +1,6 @@
+{
+  "name": "PDFExpress",
+  "description": "Suite complète de 29 outils PDF 100 % gratuits et locaux dans votre navigateur : fusionner, diviser, compresser, convertir, signer, biffer, OCR et modifier.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

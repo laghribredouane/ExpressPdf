@@ -1,0 +1,151 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Profil utilisateur racine permettant de rattacher l'historique cloud.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Identifiant Firebase Auth de l'utilisateur."
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Nom affiché de l'utilisateur."
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "URL de l'avatar utilisateur."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Horodatage serveur de création du profil."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Horodatage serveur de dernière mise à jour."
+        }
+      },
+      "required": ["uid", "displayName", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Informations personnelles isolées (email) accessibles uniquement par le propriétaire.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Identifiant Firebase Auth de l'utilisateur."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 254,
+          "description": "Adresse e-mail vérifiée de l'utilisateur."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Horodatage serveur de création."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Horodatage serveur de mise à jour."
+        }
+      },
+      "required": ["uid", "email", "createdAt", "updatedAt"]
+    },
+    "ProcessingHistoryEntry": {
+      "title": "ProcessingHistoryEntry",
+      "description": "Entrée d'historique d'un fichier PDF traité et synchronisé dans Firestore.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Identifiant unique de l'entrée d'historique."
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID du propriétaire."
+        },
+        "fileName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "Nom du fichier généré ou traité."
+        },
+        "toolId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "pattern": "^[a-z0-9_\\-]+$",
+          "description": "Identifiant technique de l'outil PDFExpress utilisé."
+        },
+        "toolTitle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "description": "Libellé de l'outil affiché dans l'historique."
+        },
+        "sizeFormatted": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Taille formatée du fichier résultant."
+        },
+        "processedAt": {
+          "type": "number",
+          "description": "Horodatage numérique en millisecondes du traitement."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Horodatage serveur Firestore."
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "fileName",
+        "toolId",
+        "toolTitle",
+        "sizeFormatted",
+        "processedAt",
+        "createdAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Profil utilisateur racine servant de document parent pour l'historique cloud."
+    },
+    "/users/{userId}/private/{infoId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Données personnelles (email) isolées en sous-collection privée."
+    },
+    "/users/{userId}/history/{entryId}": {
+      "schema": { "$ref": "#/entities/ProcessingHistoryEntry" },
+      "description": "Historique des traitements PDF sauvegardés dans le cloud pour un utilisateur."
+    }
+  }
+}
