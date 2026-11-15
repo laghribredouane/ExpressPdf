@@ -35,7 +35,9 @@ import {
   type WorkspaceModalMode,
 } from './components/WorkspaceIntegrationsModal';
 import { WorkspaceView } from './components/WorkspaceView';
+import { ImageStudioWorkspace } from './components/studio/ImageStudioWorkspace';
 import { SITE_INFO_PAGES } from './data/siteLinks';
+import { isStudioToolId } from './data/studioI18n';
 import { TOOLS } from './data/tools';
 import {
   auth,
@@ -194,6 +196,7 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [isDraggingGlobal, setIsDraggingGlobal] = useState(false);
   const [droppedFiles, setDroppedFiles] = useState<File[] | null>(null);
+  const [heroDroppedImages, setHeroDroppedImages] = useState<File[] | null>(null);
   const [activeInfoPageId, setActiveInfoPageId] = useState<string | null>(null);
   const [language, setLanguage] = useState<string>('fr');
   const [pendingScrollId, setPendingScrollId] = useState<string | null>(null);
@@ -255,10 +258,15 @@ export default function App() {
       blob: Blob;
       toolTitle?: string;
     } | null;
+    textExportContext?: {
+      title: string;
+      content: string;
+    } | null;
   }>({
     isOpen: false,
     mode: 'hub',
     attachmentContext: null,
+    textExportContext: null,
   });
   const [globalProgress, setGlobalProgress] = useState<{
     progress: number;
@@ -590,15 +598,28 @@ export default function App() {
       e.preventDefault();
       if (e.dataTransfer && e.dataTransfer.files.length > 0) {
         const filesArr = Array.from(e.dataTransfer.files);
+        const allImages = filesArr.every(
+          (f) =>
+            f.type.startsWith('image/') ||
+            /\.(jpe?g|png|webp|gif|bmp)$/i.test(f.name)
+        );
         setActivePage('main');
         if (window.location.pathname !== '/') {
           window.history.pushState({}, '', '/');
         }
         setCurrentToolId((prev) => {
-          if (prev) return prev;
-          return filesArr[0].type.startsWith('image/') ? 'jpg2pdf' : 'merge';
+          if (prev) {
+            setDroppedFiles(filesArr);
+            return prev;
+          }
+          if (allImages) {
+            setHeroDroppedImages(filesArr);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return null;
+          }
+          setDroppedFiles(filesArr);
+          return 'merge';
         });
-        setDroppedFiles(filesArr);
       }
     };
 
@@ -1265,6 +1286,47 @@ export default function App() {
           onBackHome={handleGoHome}
           onNotify={notify}
         />
+      ) : currentTool && isStudioToolId(currentTool.id) ? (
+        <ImageStudioWorkspace
+          tool={currentTool}
+          language={language}
+          droppedFiles={droppedFiles}
+          onConsumeDroppedFiles={handleConsumeDroppedFiles}
+          onGoHome={handleGoHome}
+          onSelectTool={handleSelectTool}
+          onSendToImageToPdf={(files) => {
+            setActivePage('main');
+            if (window.location.pathname !== '/') {
+              window.history.pushState({}, '', '/');
+            }
+            setDroppedFiles(files);
+            setCurrentToolId('jpg2pdf');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          onNotify={notify}
+          onFileProcessed={handleFileProcessed}
+          isPremiumOrTrial={isPremiumOrTrial}
+          isAdFree={isAdFree}
+          remainingTasks={currentLimits.remainingToday}
+          dailyLimit={currentLimits.dailyLimit}
+          checkUserQuota={checkUserQuota}
+          onQuotaBlocked={handleQuotaBlocked}
+          onQuotaConsumed={consumeQuota}
+          onOpenPremium={() => {
+            setPremiumInitialPlan('premium_pro');
+            setPremiumInitialCycle('annual');
+            setPremiumModalOpen(true);
+          }}
+          onOpenPricing={() => navigateToPage('tarifs')}
+          onSaveToGoogleDocs={(payload) =>
+            setWorkspaceModal({
+              isOpen: true,
+              mode: 'docs_export',
+              attachmentContext: null,
+              textExportContext: payload,
+            })
+          }
+        />
       ) : currentTool ? (
         <WorkspaceView
           tool={currentTool}
@@ -1278,6 +1340,15 @@ export default function App() {
               isOpen: true,
               mode: 'gmail_import',
               attachmentContext: null,
+              textExportContext: null,
+            })
+          }
+          onImportFromGoogleDocs={() =>
+            setWorkspaceModal({
+              isOpen: true,
+              mode: 'docs_browse',
+              attachmentContext: null,
+              textExportContext: null,
             })
           }
           onSendResultViaGmail={(payload) =>
@@ -1285,6 +1356,7 @@ export default function App() {
               isOpen: true,
               mode: 'gmail_send',
               attachmentContext: payload,
+              textExportContext: null,
             })
           }
           onScheduleResultInCalendar={(payload) =>
@@ -1292,6 +1364,7 @@ export default function App() {
               isOpen: true,
               mode: 'calendar_schedule',
               attachmentContext: payload,
+              textExportContext: null,
             })
           }
           isPremiumOrTrial={isPremiumOrTrial}
@@ -1310,6 +1383,7 @@ export default function App() {
         />
       ) : (
         <HomeView
+          language={language}
           activeCategory={activeCategory}
           onCategoryChange={setActiveCategory}
           searchQuery={searchQuery}
@@ -1319,6 +1393,14 @@ export default function App() {
             setSearchQuery('');
           }}
           onSelectTool={handleSelectTool}
+          pendingHeroImages={heroDroppedImages}
+          onHeroFilesDropped={(files) => setHeroDroppedImages(files)}
+          onRouteHeroImages={(targetToolId, files) => {
+            setHeroDroppedImages(null);
+            setDroppedFiles(files);
+            handleSelectTool(targetToolId);
+          }}
+          onClearHeroImages={() => setHeroDroppedImages(null)}
           onOpenInfoPage={handleOpenInfoOrLegalPage}
           selectedCurrency={selectedCurrency}
           onCurrencyChange={setSelectedCurrency}
@@ -1445,6 +1527,7 @@ export default function App() {
         }
         onNotify={notify}
         attachmentContext={workspaceModal.attachmentContext}
+        textExportContext={workspaceModal.textExportContext}
         onImportPdfToTool={(file, targetToolId) => {
           if (targetToolId) {
             setCurrentToolId(targetToolId);

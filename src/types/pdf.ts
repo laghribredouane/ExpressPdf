@@ -2,6 +2,7 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 export type CategoryId =
   | 'all'
+  | 'studio_image'
   | 'workflow'
   | 'organiser'
   | 'optimiser'
@@ -49,7 +50,10 @@ export type ToolId =
   | 'aiocr'
   | 'socialpost'
   | 'workflow'
-  | 'stampgenerator';
+  | 'stampgenerator'
+  | 'img_bg_remove'
+  | 'img_compress'
+  | 'ocr_extract';
 
 export interface CategoryDefinition {
   id: CategoryId;
@@ -214,6 +218,9 @@ export interface BankTransferSubmission {
   payerEmail: string;
   bankOrigin: string;
   transferDate: string;
+  receiptFileName?: string;
+  receiptMimeType?: string;
+  receiptDataUrl?: string;
   status: 'pending_verification';
   createdAt: number;
 }
@@ -301,6 +308,9 @@ export interface PremiumRequestRecord {
   payerEmail: string;
   bankOrigin?: string;
   transferDate: string;
+  receiptFileName?: string;
+  receiptMimeType?: string;
+  receiptDataUrl?: string;
   note?: string;
   status: 'pending' | 'approved' | 'rejected';
   reviewedBy?: string;

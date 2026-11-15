@@ -513,3 +513,333 @@ export async function createGmailDraft(
     }
   );
 }
+
+// =====================================================================
+// GOOGLE DOCS API v1 & GOOGLE DRIVE API v3 (for Google Docs discovery/export)
+// =====================================================================
+
+export interface GoogleDocSummary {
+  id: string;
+  name: string;
+  modifiedTime?: string;
+  webViewLink?: string;
+}
+
+export interface GoogleDocDetail {
+  documentId: string;
+  title: string;
+  revisionId?: string;
+  plainText: string;
+  bodyEndIndex: number;
+  webViewLink: string;
+}
+
+interface DocsParagraphElement {
+  textRun?: {
+    content?: string;
+  };
+}
+
+interface DocsStructuralElement {
+  startIndex?: number;
+  endIndex?: number;
+  paragraph?: {
+    elements?: DocsParagraphElement[];
+  };
+  table?: {
+    tableRows?: {
+      tableCells?: {
+        content?: DocsStructuralElement[];
+      }[];
+    }[];
+  };
+  tableOfContents?: {
+    content?: DocsStructuralElement[];
+  };
+}
+
+interface RawGoogleDoc {
+  documentId: string;
+  title?: string;
+  revisionId?: string;
+  body?: {
+    content?: DocsStructuralElement[];
+  };
+}
+
+function readStructuralElementsText(
+  elements: DocsStructuralElement[] | undefined
+): string {
+  if (!elements || elements.length === 0) return '';
+  let text = '';
+  for (const el of elements) {
+    if (el.paragraph?.elements) {
+      for (const pEl of el.paragraph.elements) {
+        if (pEl.textRun?.content) {
+          text += pEl.textRun.content;
+        }
+      }
+    } else if (el.table?.tableRows) {
+      for (const row of el.table.tableRows) {
+        const rowCells = (row.tableCells || []).map((cell) =>
+          readStructuralElementsText(cell.content).trim()
+        );
+        text += `${rowCells.join(' | ')}\n`;
+      }
+    } else if (el.tableOfContents?.content) {
+      text += readStructuralElementsText(el.tableOfContents.content);
+    }
+  }
+  return text;
+}
+
+function getDocBodyEndIndex(doc: RawGoogleDoc): number {
+  const content = doc.body?.content;
+  if (!content || content.length === 0) return 1;
+  const last = content[content.length - 1];
+  return typeof last?.endIndex === 'number' && last.endIndex > 1
+    ? last.endIndex
+    : 1;
+}
+
+export async function listGoogleDocs(
+  accessToken: string,
+  query = '',
+  pageSize = 20
+): Promise<GoogleDocSummary[]> {
+  const qParts = [
+    "mimeType='application/vnd.google-apps.document'",
+    'trashed=false',
+  ];
+  const cleanQuery = query.trim().replace(/['\\]/g, '\\$&');
+  if (cleanQuery) {
+    qParts.push(`name contains '${cleanQuery}'`);
+  }
+
+  const params = new URLSearchParams({
+    q: qParts.join(' and '),
+    pageSize: String(pageSize),
+    orderBy: 'modifiedTime desc',
+    fields: 'files(id,name,modifiedTime,webViewLink)',
+  });
+
+  const data = await googleFetch<{ files?: GoogleDocSummary[] }>(
+    `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+    accessToken
+  );
+
+  return data.files || [];
+}
+
+export async function getGoogleDoc(
+  accessToken: string,
+  documentId: string
+): Promise<GoogleDocDetail> {
+  const doc = await googleFetch<RawGoogleDoc>(
+    `https://docs.googleapis.com/v1/documents/${encodeURIComponent(documentId)}`,
+    accessToken
+  );
+
+  const plainText = readStructuralElementsText(doc.body?.content).replace(
+    /\n$/,
+    ''
+  );
+  const bodyEndIndex = getDocBodyEndIndex(doc);
+
+  return {
+    documentId: doc.documentId,
+    title: doc.title || 'Document sans titre',
+    revisionId: doc.revisionId,
+    plainText,
+    bodyEndIndex,
+    webViewLink: `https://docs.google.com/document/d/${doc.documentId}/edit`,
+  };
+}
+
+export async function createGoogleDoc(
+  accessToken: string,
+  title: string,
+  initialContent?: string
+): Promise<{ documentId: string; title: string; webViewLink: string }> {
+  const cleanTitle = title.trim() || 'Document PDFExpress';
+  const created = await googleFetch<RawGoogleDoc>(
+    'https://docs.googleapis.com/v1/documents',
+    accessToken,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: cleanTitle }),
+    }
+  );
+
+  if (initialContent && initialContent.trim()) {
+    await googleFetch<unknown>(
+      `https://docs.googleapis.com/v1/documents/${encodeURIComponent(
+        created.documentId
+      )}:batchUpdate`,
+      accessToken,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requests: [
+            {
+              insertText: {
+                location: { index: 1 },
+                text: initialContent,
+              },
+            },
+          ],
+        }),
+      }
+    );
+  }
+
+  return {
+    documentId: created.documentId,
+    title: created.title || cleanTitle,
+    webViewLink: `https://docs.google.com/document/d/${created.documentId}/edit`,
+  };
+}
+
+export async function appendTextToGoogleDoc(
+  accessToken: string,
+  documentId: string,
+  textToAppend: string
+): Promise<void> {
+  const trimmed = textToAppend.trim();
+  if (!trimmed) return;
+
+  const latest = await getGoogleDoc(accessToken, documentId);
+  const insertIndex = Math.max(1, latest.bodyEndIndex - 1);
+  const prefix =
+    latest.plainText.trim().length > 0 && !latest.plainText.endsWith('\n')
+      ? '\n\n'
+      : '';
+
+  await googleFetch<unknown>(
+    `https://docs.googleapis.com/v1/documents/${encodeURIComponent(
+      documentId
+    )}:batchUpdate`,
+    accessToken,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requests: [
+          {
+            insertText: {
+              location: { index: insertIndex },
+              text: `${prefix}${trimmed}\n`,
+            },
+          },
+        ],
+      }),
+    }
+  );
+}
+
+export async function replaceGoogleDocText(
+  accessToken: string,
+  documentId: string,
+  newContent: string
+): Promise<void> {
+  const latest = await getGoogleDoc(accessToken, documentId);
+  const requests: Record<string, unknown>[] = [];
+
+  if (latest.bodyEndIndex > 2) {
+    requests.push({
+      deleteContentRange: {
+        range: {
+          startIndex: 1,
+          endIndex: latest.bodyEndIndex - 1,
+        },
+      },
+    });
+  }
+
+  if (newContent.length > 0) {
+    requests.push({
+      insertText: {
+        location: { index: 1 },
+        text: newContent,
+      },
+    });
+  }
+
+  if (requests.length === 0) return;
+
+  await googleFetch<unknown>(
+    `https://docs.googleapis.com/v1/documents/${encodeURIComponent(
+      documentId
+    )}:batchUpdate`,
+    accessToken,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests }),
+    }
+  );
+}
+
+export async function trashGoogleDoc(
+  accessToken: string,
+  documentId: string
+): Promise<void> {
+  await googleFetch<unknown>(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(documentId)}`,
+    accessToken,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trashed: true }),
+    }
+  );
+}
+
+export async function exportGoogleDocAsPdf(
+  accessToken: string,
+  documentId: string,
+  title: string
+): Promise<File> {
+  const url = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+    documentId
+  )}/export?mimeType=application/pdf`;
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (res.status === 401) {
+    throw new WorkspaceAuthError();
+  }
+
+  if (!res.ok) {
+    let apiMsg = `Erreur export PDF Google Docs (${res.status})`;
+    try {
+      const parsed = (await res.json()) as { error?: { message?: string } };
+      if (parsed?.error?.message) apiMsg = parsed.error.message;
+    } catch {
+      // Ignore JSON parse errors on binary endpoint
+    }
+    if (res.status === 403 && apiMsg.toLowerCase().includes('insufficient')) {
+      throw new WorkspaceAuthError(
+        'Permissions Google Docs/Drive insuffisantes. Veuillez vous reconnecter avec Google.'
+      );
+    }
+    throw new Error(apiMsg);
+  }
+
+  const blob = await res.blob();
+  const safeBaseName =
+    (title || 'Google_Doc')
+      .replace(/[\\/:*?"<>|]/g, '_')
+      .trim() || 'Google_Doc';
+  const fileName = safeBaseName.toLowerCase().endsWith('.pdf')
+    ? safeBaseName
+    : `${safeBaseName}.pdf`;
+
+  return new File([blob], fileName, { type: 'application/pdf' });
+}

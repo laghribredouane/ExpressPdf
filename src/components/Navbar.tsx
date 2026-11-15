@@ -26,6 +26,12 @@ import {
   Share2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
+import {
+  STUDIO_COPY,
+  getCategoryLabel,
+  getLocalizedToolMeta,
+  normalizeLang,
+} from '../data/studioI18n';
 import { CATEGORIES, MENU_CATEGORIES, TOOLS } from '../data/tools';
 import { FOOTER_COLUMNS } from '../data/siteLinks';
 import type { EffectivePlanTier } from '../hooks/useSubscriptionAndQuota';
@@ -143,19 +149,26 @@ export function Navbar({
     };
   }, [drawerOpen]);
 
+  const lang = normalizeLang(language);
+  const studioT = STUDIO_COPY[lang];
   const toPdf = TOOLS.filter((t) => t.cat === 'convertir_en');
   const fromPdf = TOOLS.filter((t) => t.cat === 'convertir_depuis');
 
   const drawerFilteredTools = useMemo(() => {
     const q = drawerSearch.trim().toLowerCase();
     if (!q) return [];
-    return TOOLS.filter(
-      (t) =>
+    return TOOLS.filter((t) => {
+      const meta = getLocalizedToolMeta(t, lang);
+      return (
         t.title.toLowerCase().includes(q) ||
         t.desc.toLowerCase().includes(q) ||
-        t.catLabel.toLowerCase().includes(q)
-    );
-  }, [drawerSearch]);
+        t.catLabel.toLowerCase().includes(q) ||
+        meta.title.toLowerCase().includes(q) ||
+        meta.desc.toLowerCase().includes(q) ||
+        meta.catLabel.toLowerCase().includes(q)
+      );
+    });
+  }, [drawerSearch, lang]);
 
   const handleToolClick = (id: ToolId) => {
     setOpenMenu(null);
@@ -286,6 +299,13 @@ export function Navbar({
             >
               Modifier
             </button>
+            <button
+              type="button"
+              onClick={() => handleCategoryShortcut('studio_image')}
+              className="min-h-[44px] px-2.5 rounded-xl text-xs font-bold text-teal-700 dark:text-teal-300 hover:bg-teal-50 dark:hover:bg-teal-950/40 whitespace-nowrap shrink-0 transition-colors"
+            >
+              {studioT.studioName}
+            </button>
 
             <div className="relative">
               <button
@@ -332,6 +352,13 @@ export function Navbar({
               className="text-xs font-bold tracking-wide text-neutral-700 dark:text-neutral-200 hover:text-brand-red dark:hover:text-brand-red transition-colors whitespace-nowrap shrink-0 py-2"
             >
               Compresser PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => handleCategoryShortcut('studio_image')}
+              className="text-xs font-extrabold tracking-wide text-teal-700 dark:text-teal-300 hover:text-teal-600 dark:hover:text-teal-200 transition-colors whitespace-nowrap shrink-0 py-2"
+            >
+              {studioT.studioName}
             </button>
 
             {/* Dropdown Convertir PDF */}
@@ -456,32 +483,35 @@ export function Navbar({
                       })}
                     </div>
 
-                    {/* Accès complémentaire Intelligence PDF & Flux de travail */}
-                    <div className="pt-3 border-t border-neutral-100 dark:border-brand-borderDark grid grid-cols-2 gap-4">
+                    {/* Accès complémentaire Intelligence PDF, Studio Image & OCR, Flux de travail */}
+                    <div className="pt-3 border-t border-neutral-100 dark:border-brand-borderDark grid grid-cols-3 gap-4">
                       {EXTRA_CATEGORIES.map((cat) => {
                         const catTools = TOOLS.filter((t) => t.cat === cat.id);
                         return (
                           <div key={cat.id} className="min-w-0">
                             <p className="text-[11px] font-extrabold uppercase tracking-wider text-neutral-400 mb-2 px-2">
-                              {cat.label}
+                              {getCategoryLabel(cat.id as CategoryId, cat.label, lang)}
                             </p>
                             <div className="flex flex-wrap gap-1.5">
-                              {catTools.map((t) => (
-                                <button
-                                  key={t.id}
-                                  type="button"
-                                  onClick={() => handleToolClick(t.id)}
-                                  className="px-2.5 py-1.5 rounded-lg bg-neutral-50 dark:bg-neutral-800/70 hover:bg-neutral-100 dark:hover:bg-neutral-800 inline-flex items-center gap-2 text-xs font-semibold text-neutral-700 dark:text-neutral-200 transition-colors"
-                                >
-                                  <span
-                                    className={`w-5 h-5 rounded ${t.badge} flex items-center justify-center shrink-0`}
+                              {catTools.map((t) => {
+                                const tMeta = getLocalizedToolMeta(t, lang);
+                                return (
+                                  <button
+                                    key={t.id}
+                                    type="button"
+                                    onClick={() => handleToolClick(t.id)}
+                                    className="px-2.5 py-1.5 rounded-lg bg-neutral-50 dark:bg-neutral-800/70 hover:bg-neutral-100 dark:hover:bg-neutral-800 inline-flex items-center gap-2 text-xs font-semibold text-neutral-700 dark:text-neutral-200 transition-colors"
                                   >
-                                    <ToolIcon name={t.icon} className="w-3 h-3" />
-                                  </span>
-                                  <span>{t.title}</span>
-                                  {renderProBadge(t.isPro)}
-                                </button>
-                              ))}
+                                    <span
+                                      className={`w-5 h-5 rounded ${t.badge} flex items-center justify-center shrink-0`}
+                                    >
+                                      <ToolIcon name={t.icon} className="w-3 h-3" />
+                                    </span>
+                                    <span>{tMeta.title}</span>
+                                    {renderProBadge(t.isPro)}
+                                  </button>
+                                );
+                              })}
                             </div>
                           </div>
                         );
@@ -584,16 +614,16 @@ export function Navbar({
               </button>
             )}
 
-            {/* Bouton Google Calendar & Gmail (Tablette & PC) */}
+            {/* Bouton Google Docs, Calendar & Gmail (Tablette & PC) */}
             <button
               type="button"
               onClick={onOpenWorkspaceHub}
-              title="Ouvrir Google Calendar & Gmail"
-              aria-label="Ouvrir Google Calendar et Gmail"
+              title="Ouvrir Google Docs, Calendar & Gmail"
+              aria-label="Ouvrir Google Docs, Calendar et Gmail"
               className="hidden lg:inline-flex relative min-h-[44px] px-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50 font-bold text-xs items-center gap-1.5 transition-colors shrink-0 whitespace-nowrap"
             >
               <Calendar className="w-4 h-4 shrink-0" />
-              <span className="hidden 2xl:inline">Agenda &amp; Mail</span>
+              <span className="hidden 2xl:inline">Docs &amp; Workspace</span>
               {workspaceConnected && (
                 <span
                   className="w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-neutral-900"
@@ -983,9 +1013,13 @@ export function Navbar({
                 key={cat.id}
                 type="button"
                 onClick={() => handleCategoryShortcut(cat.id)}
-                className="px-3 py-1.5 min-h-[36px] rounded-lg bg-white dark:bg-brand-cardDark border border-neutral-200/80 dark:border-brand-borderDark text-[11px] font-bold text-neutral-700 dark:text-neutral-200 hover:border-brand-red hover:text-brand-red whitespace-nowrap shrink-0 transition-colors"
+                className={`px-3 py-1.5 min-h-[36px] rounded-lg border text-[11px] font-bold hover:border-brand-red hover:text-brand-red whitespace-nowrap shrink-0 transition-colors ${
+                  cat.id === 'studio_image'
+                    ? 'bg-teal-50 dark:bg-teal-950/40 border-teal-200 dark:border-teal-800 text-teal-800 dark:text-teal-200'
+                    : 'bg-white dark:bg-brand-cardDark border-neutral-200/80 dark:border-brand-borderDark text-neutral-700 dark:text-neutral-200'
+                }`}
               >
-                {cat.label}
+                {getCategoryLabel(cat.id, cat.label, lang)}
               </button>
             ))}
           </div>
@@ -1031,25 +1065,28 @@ export function Navbar({
                       return (
                         <div key={cat.id} className="min-w-0">
                           <p className="text-[11px] font-extrabold uppercase tracking-wider text-neutral-400 mb-2 px-2">
-                            {cat.label}
+                            {getCategoryLabel(cat.id as CategoryId, cat.label, lang)}
                           </p>
                           <div className="space-y-1">
-                            {catTools.map((t) => (
-                              <button
-                                key={t.id}
-                                type="button"
-                                onClick={() => handleToolClick(t.id)}
-                                className="w-full min-h-[40px] text-left px-2.5 py-1.5 rounded-xl hover:bg-neutral-100 dark:hover:bg-neutral-800 flex items-center gap-2 text-xs font-semibold text-neutral-700 dark:text-neutral-200 transition-colors"
-                              >
-                                <span
-                                  className={`w-6 h-6 rounded-lg ${t.badge} flex items-center justify-center shrink-0`}
+                            {catTools.map((t) => {
+                              const tMeta = getLocalizedToolMeta(t, lang);
+                              return (
+                                <button
+                                  key={t.id}
+                                  type="button"
+                                  onClick={() => handleToolClick(t.id)}
+                                  className="w-full min-h-[40px] text-left px-2.5 py-1.5 rounded-xl hover:bg-neutral-100 dark:hover:bg-neutral-800 flex items-center gap-2 text-xs font-semibold text-neutral-700 dark:text-neutral-200 transition-colors"
                                 >
-                                  <ToolIcon name={t.icon} className="w-3.5 h-3.5" />
-                                </span>
-                                <span className="truncate">{t.title}</span>
-                                {renderProBadge(t.isPro)}
-                              </button>
-                            ))}
+                                  <span
+                                    className={`w-6 h-6 rounded-lg ${t.badge} flex items-center justify-center shrink-0`}
+                                  >
+                                    <ToolIcon name={t.icon} className="w-3.5 h-3.5" />
+                                  </span>
+                                  <span className="truncate">{tMeta.title}</span>
+                                  {renderProBadge(t.isPro)}
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
                       );
@@ -1119,172 +1156,183 @@ export function Navbar({
 
               {drawerOpen === 'grid' ? (
                 <div className="space-y-6">
-                  {MENU_CATEGORIES.map((cat) => {
-                    const catTools = TOOLS.filter((t) => t.cat === cat.id);
-                    return (
-                      <div key={cat.id}>
-                        <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 mb-2">
-                          {cat.label}
-                        </p>
-                        <div className="grid grid-cols-1 gap-1.5">
-                          {catTools.map((t) => (
-                            <button
-                              key={t.id}
-                              type="button"
-                              onClick={() => handleToolClick(t.id)}
-                              className="w-full min-h-[44px] text-left px-3 py-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-neutral-800 flex items-center gap-3 text-sm font-semibold text-neutral-800 dark:text-neutral-100 transition-colors"
-                            >
-                              <span
-                                className={`w-7 h-7 rounded-lg ${t.badge} flex items-center justify-center shrink-0`}
-                              >
-                                <ToolIcon name={t.icon} className="w-4 h-4" />
-                              </span>
-                              <span className="truncate">{t.title}</span>
-                              {renderProBadge(t.isPro)}
-                            </button>
-                          ))}
+                    {MENU_CATEGORIES.map((cat) => {
+                      const catTools = TOOLS.filter((t) => t.cat === cat.id);
+                      return (
+                        <div key={cat.id}>
+                          <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 mb-2">
+                            {getCategoryLabel(cat.id as CategoryId, cat.label, lang)}
+                          </p>
+                          <div className="grid grid-cols-1 gap-1.5">
+                            {catTools.map((t) => {
+                              const tMeta = getLocalizedToolMeta(t, lang);
+                              return (
+                                <button
+                                  key={t.id}
+                                  type="button"
+                                  onClick={() => handleToolClick(t.id)}
+                                  className="w-full min-h-[44px] text-left px-3 py-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-neutral-800 flex items-center gap-3 text-sm font-semibold text-neutral-800 dark:text-neutral-100 transition-colors"
+                                >
+                                  <span
+                                    className={`w-7 h-7 rounded-lg ${t.badge} flex items-center justify-center shrink-0`}
+                                  >
+                                    <ToolIcon name={t.icon} className="w-4 h-4" />
+                                  </span>
+                                  <span className="truncate">{tMeta.title}</span>
+                                  {renderProBadge(t.isPro)}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="space-y-5">
-                  {/* 1. Barre de recherche instantanée dans le tiroir */}
-                  <div className="relative">
-                    <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    <input
-                      type="text"
-                      value={drawerSearch}
-                      onChange={(e) => setDrawerSearch(e.target.value)}
-                      placeholder={`Rechercher parmi les ${TOOLS.length} outils...`}
-                      aria-label="Filtrer les outils dans le menu"
-                      className="w-full min-h-[44px] pl-10 pr-9 py-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-transparent focus:border-brand-red focus:bg-white dark:focus:bg-neutral-900 text-sm outline-none transition-colors"
-                    />
-                    {drawerSearch && (
-                      <button
-                        type="button"
-                        onClick={() => setDrawerSearch('')}
-                        aria-label="Effacer la recherche"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-neutral-700"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    )}
+                      );
+                    })}
                   </div>
-
-                  {/* Résultats instantanés si recherche active */}
-                  {drawerSearch.trim() ? (
-                    <div className="space-y-1.5">
-                      <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">
-                        Résultats ({drawerFilteredTools.length})
-                      </p>
-                      {drawerFilteredTools.length === 0 ? (
-                        <p className="text-xs text-neutral-500 py-4 text-center">
-                          Aucun outil ne correspond à « {drawerSearch} ».
-                        </p>
-                      ) : (
-                        drawerFilteredTools.map((t) => (
-                          <button
-                            key={t.id}
-                            type="button"
-                            onClick={() => handleToolClick(t.id)}
-                            className="w-full min-h-[44px] text-left px-3 py-2 rounded-xl bg-neutral-50 dark:bg-neutral-800/70 hover:bg-neutral-100 dark:hover:bg-neutral-800 flex items-center gap-3 text-sm font-semibold text-neutral-800 dark:text-neutral-100"
-                          >
-                            <span
-                              className={`w-7 h-7 rounded-lg ${t.badge} flex items-center justify-center shrink-0`}
-                            >
-                              <ToolIcon name={t.icon} className="w-4 h-4" />
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate">{t.title}</p>
-                              <p className="text-[10px] text-neutral-400 truncate">
-                                {t.catLabel}
-                              </p>
-                            </div>
-                            {renderProBadge(t.isPro)}
-                          </button>
-                        ))
+                ) : (
+                  <div className="space-y-5">
+                    {/* 1. Barre de recherche instantanée dans le tiroir */}
+                    <div className="relative">
+                      <Search className="w-4 h-4 text-neutral-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={drawerSearch}
+                        onChange={(e) => setDrawerSearch(e.target.value)}
+                        placeholder={`Rechercher parmi les ${TOOLS.length} outils...`}
+                        aria-label="Filtrer les outils dans le menu"
+                        className="w-full min-h-[44px] pl-10 pr-9 py-2.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 border border-transparent focus:border-brand-red focus:bg-white dark:focus:bg-neutral-900 text-sm outline-none transition-colors"
+                      />
+                      {drawerSearch && (
+                        <button
+                          type="button"
+                          onClick={() => setDrawerSearch('')}
+                          aria-label="Effacer la recherche"
+                          className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-neutral-700"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
                       )}
                     </div>
-                  ) : (
-                    /* 2. Accordéon complet des catégories (6 catégories cœur + IA/Flux) */
-                    <div>
-                      <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 mb-2">
-                        Tous les outils par catégorie
-                      </p>
+
+                    {/* Résultats instantanés si recherche active */}
+                    {drawerSearch.trim() ? (
                       <div className="space-y-1.5">
-                        {MENU_CATEGORIES.map((cat) => {
-                          const catTools = TOOLS.filter((t) => t.cat === cat.id);
-                          const isOpen = expandedCat === cat.id;
-                          return (
-                            <div
-                              key={cat.id}
-                              className="rounded-xl border border-neutral-200 dark:border-brand-borderDark overflow-hidden"
-                            >
+                        <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-400">
+                          Résultats ({drawerFilteredTools.length})
+                        </p>
+                        {drawerFilteredTools.length === 0 ? (
+                          <p className="text-xs text-neutral-500 py-4 text-center">
+                            Aucun outil ne correspond à « {drawerSearch} ».
+                          </p>
+                        ) : (
+                          drawerFilteredTools.map((t) => {
+                            const tMeta = getLocalizedToolMeta(t, lang);
+                            return (
                               <button
+                                key={t.id}
                                 type="button"
-                                onClick={() =>
-                                  setExpandedCat(isOpen ? null : cat.id)
-                                }
-                                aria-expanded={isOpen}
-                                className="w-full min-h-[44px] px-3.5 py-2.5 flex items-center justify-between text-sm font-bold text-neutral-800 dark:text-neutral-100 hover:bg-neutral-50 dark:hover:bg-neutral-800/60"
+                                onClick={() => handleToolClick(t.id)}
+                                className="w-full min-h-[44px] text-left px-3 py-2 rounded-xl bg-neutral-50 dark:bg-neutral-800/70 hover:bg-neutral-100 dark:hover:bg-neutral-800 flex items-center gap-3 text-sm font-semibold text-neutral-800 dark:text-neutral-100"
                               >
-                                <span className="flex items-center gap-2">
-                                  <span>{cat.label}</span>
-                                  <span className="text-[11px] font-semibold text-neutral-400 tabular-nums">
-                                    ({catTools.length})
-                                  </span>
+                                <span
+                                  className={`w-7 h-7 rounded-lg ${t.badge} flex items-center justify-center shrink-0`}
+                                >
+                                  <ToolIcon name={t.icon} className="w-4 h-4" />
                                 </span>
-                                <ChevronRight
-                                  className={`w-4 h-4 transition-transform ${
-                                    isOpen ? 'rotate-90' : ''
-                                  }`}
-                                />
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate">{tMeta.title}</p>
+                                  <p className="text-[10px] text-neutral-400 truncate">
+                                    {tMeta.catLabel}
+                                  </p>
+                                </div>
+                                {renderProBadge(t.isPro)}
                               </button>
-                              <AnimatePresence initial={false}>
-                                {isOpen && (
-                                  <motion.div
-                                    key={`cat-body-${cat.id}`}
-                                    initial={{ height: 0, opacity: 0 }}
-                                    animate={{ height: 'auto', opacity: 1 }}
-                                    exit={{ height: 0, opacity: 0 }}
-                                    transition={{
-                                      duration: 0.2,
-                                      ease: [0.22, 1, 0.36, 1],
-                                    }}
-                                    className="overflow-hidden"
-                                  >
-                                    <div className="px-2 pb-2 space-y-1 bg-neutral-50/70 dark:bg-neutral-900/40">
-                                      {catTools.map((t) => (
-                                        <button
-                                          key={t.id}
-                                          type="button"
-                                          onClick={() => handleToolClick(t.id)}
-                                          className="w-full min-h-[44px] text-left px-2.5 py-2 rounded-lg hover:bg-white dark:hover:bg-neutral-800 flex items-center gap-2.5 text-xs font-semibold text-neutral-700 dark:text-neutral-200"
-                                        >
-                                          <span
-                                            className={`w-6 h-6 rounded ${t.badge} flex items-center justify-center shrink-0`}
-                                          >
-                                            <ToolIcon
-                                              name={t.icon}
-                                              className="w-3.5 h-3.5"
-                                            />
-                                          </span>
-                                          <span className="truncate">
-                                            {t.title}
-                                          </span>
-                                          {renderProBadge(t.isPro)}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </motion.div>
-                                )}
-                              </AnimatePresence>
-                            </div>
-                          );
-                        })}
+                            );
+                          })
+                        )}
                       </div>
+                    ) : (
+                      /* 2. Accordéon complet des catégories (6 catégories cœur + Studio + IA/Flux) */
+                      <div>
+                        <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-400 mb-2">
+                          Tous les outils par catégorie
+                        </p>
+                        <div className="space-y-1.5">
+                          {MENU_CATEGORIES.map((cat) => {
+                            const catTools = TOOLS.filter((t) => t.cat === cat.id);
+                            const isOpen = expandedCat === cat.id;
+                            return (
+                              <div
+                                key={cat.id}
+                                className="rounded-xl border border-neutral-200 dark:border-brand-borderDark overflow-hidden"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedCat(isOpen ? null : cat.id)
+                                  }
+                                  aria-expanded={isOpen}
+                                  className="w-full min-h-[44px] px-3.5 py-2.5 flex items-center justify-between text-sm font-bold text-neutral-800 dark:text-neutral-100 hover:bg-neutral-50 dark:hover:bg-neutral-800/60"
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <span>
+                                      {getCategoryLabel(cat.id as CategoryId, cat.label, lang)}
+                                    </span>
+                                    <span className="text-[11px] font-semibold text-neutral-400 tabular-nums">
+                                      ({catTools.length})
+                                    </span>
+                                  </span>
+                                  <ChevronRight
+                                    className={`w-4 h-4 transition-transform ${
+                                      isOpen ? 'rotate-90' : ''
+                                    }`}
+                                  />
+                                </button>
+                                <AnimatePresence initial={false}>
+                                  {isOpen && (
+                                    <motion.div
+                                      key={`cat-body-${cat.id}`}
+                                      initial={{ height: 0, opacity: 0 }}
+                                      animate={{ height: 'auto', opacity: 1 }}
+                                      exit={{ height: 0, opacity: 0 }}
+                                      transition={{
+                                        duration: 0.2,
+                                        ease: [0.22, 1, 0.36, 1],
+                                      }}
+                                      className="overflow-hidden"
+                                    >
+                                      <div className="px-2 pb-2 space-y-1 bg-neutral-50/70 dark:bg-neutral-900/40">
+                                        {catTools.map((t) => {
+                                          const tMeta = getLocalizedToolMeta(t, lang);
+                                          return (
+                                            <button
+                                              key={t.id}
+                                              type="button"
+                                              onClick={() => handleToolClick(t.id)}
+                                              className="w-full min-h-[44px] text-left px-2.5 py-2 rounded-lg hover:bg-white dark:hover:bg-neutral-800 flex items-center gap-2.5 text-xs font-semibold text-neutral-700 dark:text-neutral-200"
+                                            >
+                                              <span
+                                                className={`w-6 h-6 rounded ${t.badge} flex items-center justify-center shrink-0`}
+                                              >
+                                                <ToolIcon
+                                                  name={t.icon}
+                                                  className="w-3.5 h-3.5"
+                                                />
+                                              </span>
+                                              <span className="truncate">
+                                                {tMeta.title}
+                                              </span>
+                                              {renderProBadge(t.isPro)}
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+                              </div>
+                            );
+                          })}
+                        </div>
                     </div>
                   )}
 
@@ -1345,7 +1393,7 @@ export function Navbar({
                     >
                       <span className="inline-flex items-center gap-2">
                         <Calendar className="w-4 h-4" />
-                        <span>Google Calendar &amp; Gmail</span>
+                        <span>Google Docs, Calendar &amp; Gmail</span>
                       </span>
                       <ChevronRight className="w-4 h-4" />
                     </button>

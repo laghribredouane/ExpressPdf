@@ -2,6 +2,7 @@ import type { CategoryDefinition, ToolDefinition } from '../types/pdf';
 
 export const CATEGORIES: CategoryDefinition[] = [
   { id: 'all', label: 'Tout' },
+  { id: 'studio_image', label: 'Studio Image & OCR' },
   { id: 'workflow', label: 'Flux de travail' },
   { id: 'organiser', label: 'Organiser PDF' },
   { id: 'optimiser', label: 'Optimiser le PDF' },
@@ -19,6 +20,7 @@ export const MENU_CATEGORIES: { id: ToolDefinition['cat']; label: string }[] = [
   { id: 'modifier', label: 'Modifier PDF' },
   { id: 'securite', label: 'Sécurité PDF' },
   { id: 'intelligence', label: 'Intelligence PDF' },
+  { id: 'studio_image', label: 'Studio Image & OCR' },
   { id: 'workflow', label: 'Flux de travail' },
 ];
 
@@ -561,5 +563,49 @@ export const TOOLS: ToolDefinition[] = [
     multiple: true,
     btnText: 'Sélectionner des fichiers PDF',
     actionLabel: 'Exécuter le flux de travail',
+  },
+
+  // 9. STUDIO IMAGE & OCR (100% LOCAL)
+  {
+    id: 'img_bg_remove',
+    cat: 'studio_image',
+    catLabel: 'Studio Image & OCR',
+    title: 'Suppresseur d’arrière-plan IA',
+    desc: 'Supprimez automatiquement le fond de vos images en local avec l’IA et remplacez-le par une couleur, un dégradé ou de la transparence.',
+    icon: 'eraser',
+    color: 'bg-teal-600',
+    badge: 'text-teal-600 dark:text-teal-400 bg-teal-50 dark:bg-teal-950/50',
+    accept: 'image/jpeg,image/png,image/webp',
+    multiple: false,
+    btnText: 'Sélectionner une image',
+    actionLabel: 'Supprimer l’arrière-plan',
+  },
+  {
+    id: 'img_compress',
+    cat: 'studio_image',
+    catLabel: 'Studio Image & OCR',
+    title: 'Compresseur & Convertisseur d’Images',
+    desc: 'Compressez vos photos avec comparateur Avant/Après interactif et convertissez-les en WebP, JPEG ou PNG.',
+    icon: 'sliders-horizontal',
+    color: 'bg-cyan-600',
+    badge: 'text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-950/50',
+    accept: 'image/jpeg,image/png,image/webp',
+    multiple: true,
+    btnText: 'Sélectionner des images',
+    actionLabel: 'Compresser l’image',
+  },
+  {
+    id: 'ocr_extract',
+    cat: 'studio_image',
+    catLabel: 'Studio Image & OCR',
+    title: 'Extracteur OCR Multilingue',
+    desc: 'Extrayez le texte Arabe, Français et Anglais de vos images ou PDF scannés localement, puis exportez en .TXT ou PDF indexable.',
+    icon: 'scan-search',
+    color: 'bg-fuchsia-600',
+    badge: 'text-fuchsia-600 dark:text-fuchsia-400 bg-fuchsia-50 dark:bg-fuchsia-950/50',
+    accept: 'image/jpeg,image/png,image/webp,.pdf',
+    multiple: false,
+    btnText: 'Sélectionner image ou PDF scanné',
+    actionLabel: 'Extraire le texte (OCR)',
   },
 ];

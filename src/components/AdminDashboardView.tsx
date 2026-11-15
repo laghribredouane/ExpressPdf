@@ -6,12 +6,16 @@ import {
   CheckCircle2,
   Clock,
   Crown,
+  Download,
+  Eye,
+  FileText,
   Laptop,
   RefreshCw,
   Search,
   ShieldAlert,
   ShieldCheck,
   Users,
+  X,
   XCircle,
 } from 'lucide-react';
 import {
@@ -23,7 +27,7 @@ import {
   fetchAdminDashboardData,
   type AdminDashboardSnapshot,
 } from '../services/saasService';
-import type { SubscriptionStatus } from '../types/pdf';
+import type { PremiumRequestRecord, SubscriptionStatus } from '../types/pdf';
 import { AdSenseDiagnosticPanel } from './AdSenseDiagnosticPanel';
 
 interface AdminDashboardViewProps {
@@ -81,6 +85,38 @@ export function AdminDashboardView({
   const [statusFilter, setStatusFilter] = useState<'all' | SubscriptionStatus>(
     'all'
   );
+  const [previewReceiptReq, setPreviewReceiptReq] =
+    useState<PremiumRequestRecord | null>(null);
+  const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const dataUrl = previewReceiptReq?.receiptDataUrl;
+    if (!dataUrl) {
+      setPreviewBlobUrl(null);
+      return;
+    }
+    let objectUrl: string | null = null;
+    try {
+      const [header, base64] = dataUrl.split(',');
+      const mimeMatch = header.match(/data:([^;]+)/);
+      const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+      const binary = atob(base64 || '');
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: mime });
+      objectUrl = URL.createObjectURL(blob);
+      setPreviewBlobUrl(objectUrl);
+    } catch {
+      setPreviewBlobUrl(dataUrl);
+    }
+    return () => {
+      if (objectUrl && objectUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+  }, [previewReceiptReq]);
 
   const loadData = useCallback(async () => {
     if (!isAdmin) return;
@@ -476,7 +512,7 @@ export function AdminDashboardView({
                   <div className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-mono text-xs font-extrabold px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white">
-                        {req.reference}
+                        {req.reference || 'Sans référence (justificatif joint)'}
                       </span>
                       <span className="text-sm font-extrabold text-neutral-900 dark:text-white">
                         {req.planLabel} ({req.cycle === 'annual' ? 'Annuel' : 'Mensuel'}) —{' '}
@@ -503,6 +539,32 @@ export function AdminDashboardView({
                       <strong>{req.bankOrigin || 'Non précisée'}</strong> · Date virement :{' '}
                       <strong>{req.transferDate}</strong>
                     </p>
+                    {req.receiptDataUrl && (
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>
+                            Justificatif : {req.receiptFileName || 'Pièce bancaire'}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewReceiptReq(req)}
+                          className="px-2.5 py-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-[11px] font-bold text-neutral-800 dark:text-neutral-100 inline-flex items-center gap-1"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Voir le justificatif</span>
+                        </button>
+                        <a
+                          href={req.receiptDataUrl}
+                          download={req.receiptFileName || `justificatif_${req.id}`}
+                          className="px-2.5 py-1 rounded-lg border border-neutral-200 dark:border-neutral-700 hover:border-brand-red text-[11px] font-bold text-neutral-700 dark:text-neutral-200 inline-flex items-center gap-1"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Télécharger</span>
+                        </a>
+                      </div>
+                    )}
                     {req.note && (
                       <p className="text-[11px] text-neutral-500">Note : {req.note}</p>
                     )}
@@ -782,6 +844,68 @@ export function AdminDashboardView({
 
       {/* Tab 4: Diagnostic Google AdSense */}
       {tab === 'adsense' && <AdSenseDiagnosticPanel onNotify={onNotify} />}
+
+      {/* Modale d'aperçu du justificatif bancaire */}
+      {previewReceiptReq && previewReceiptReq.receiptDataUrl && (
+        <div
+          className="fixed inset-0 z-[95] flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-3xl max-h-[90dvh] rounded-3xl bg-white dark:bg-brand-cardDark border border-neutral-200 dark:border-brand-borderDark shadow-2xl overflow-hidden flex flex-col">
+            <div className="px-5 py-4 border-b border-neutral-200 dark:border-brand-borderDark flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-sm sm:text-base font-extrabold text-neutral-900 dark:text-white truncate">
+                  Justificatif bancaire · {previewReceiptReq.payerName}
+                </h3>
+                <p className="text-xs text-neutral-500 truncate">
+                  {previewReceiptReq.receiptFileName || 'Pièce justificative'} ·{' '}
+                  {previewReceiptReq.formattedAmount}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href={previewReceiptReq.receiptDataUrl}
+                  download={
+                    previewReceiptReq.receiptFileName ||
+                    `justificatif_${previewReceiptReq.id}`
+                  }
+                  className="px-3 py-1.5 rounded-xl bg-brand-red hover:bg-brand-redHover text-white text-xs font-bold inline-flex items-center gap-1.5"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Télécharger</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={() => setPreviewReceiptReq(null)}
+                  aria-label="Fermer l’aperçu"
+                  className="w-9 h-9 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 hover:text-brand-red flex items-center justify-center"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="p-4 overflow-auto flex-1 bg-neutral-50 dark:bg-neutral-950 flex items-center justify-center">
+              {previewReceiptReq.receiptMimeType === 'application/pdf' ? (
+                <iframe
+                  src={previewBlobUrl || previewReceiptReq.receiptDataUrl}
+                  title="Aperçu PDF du justificatif bancaire"
+                  className="w-full h-[65dvh] rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white"
+                />
+              ) : (
+                <img
+                  src={previewBlobUrl || previewReceiptReq.receiptDataUrl}
+                  alt={
+                    previewReceiptReq.receiptFileName ||
+                    'Justificatif bancaire client'
+                  }
+                  className="max-w-full max-h-[68dvh] object-contain rounded-xl border border-neutral-200 dark:border-neutral-800"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

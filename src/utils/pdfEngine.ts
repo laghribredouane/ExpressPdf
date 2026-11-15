@@ -1220,7 +1220,7 @@ export async function executePdfTool(
     const bytes = await pdfDoc.save();
     blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
     fileName = `traduit_${files[0].name}`;
-    statsHtml = `Document traduit en <strong>${options.translateTargetLang || 'Anglais'}</strong>.`;
+    statsHtml = `Document traduit en <strong>${escapeHtml(options.translateTargetLang || 'Anglais')}</strong>.`;
   } else if (toolId === 'aiocr') {
     const renderedPages: Array<{
       pageIndex: number;

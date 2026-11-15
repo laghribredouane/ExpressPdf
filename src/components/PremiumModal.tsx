@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Building2,
   Check,
@@ -6,9 +6,12 @@ import {
   Copy,
   Crown,
   Download,
+  FileText,
   Landmark,
+  Paperclip,
   RotateCcw,
   ShieldCheck,
+  Upload,
   X,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
@@ -23,7 +26,11 @@ import type {
   BillingCycle,
   CurrencyCode,
 } from '../types/pdf';
-import { createFormattedTextPdf } from '../utils/pdfEngine';
+import {
+  createFormattedTextPdf,
+  loadPdfJsDocument,
+  renderPdfPageToDataURL,
+} from '../utils/pdfEngine';
 
 interface PremiumModalProps {
   isOpen: boolean;
@@ -42,10 +49,67 @@ interface PremiumModalProps {
   onRequireAuth?: () => void;
 }
 
-function generateReference(): string {
-  const rand = Math.random().toString(36).slice(2, 7).toUpperCase();
-  const datePart = new Date().toISOString().slice(2, 10).replace(/-/g, '');
-  return `PDFEXP-${datePart}-${rand}`;
+interface AttachedReceipt {
+  fileName: string;
+  mimeType: string;
+  dataUrl: string;
+  sizeLabel: string;
+}
+
+const MAX_RECEIPT_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_RECEIPT_DATA_URL_LENGTH = 650000;
+const ALLOWED_IMAGE_MIME_RE = /^image\/(jpeg|jpg|png|webp|gif)$/i;
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Lecture du fichier impossible.'));
+      }
+    };
+    reader.onerror = () => reject(new Error('Erreur de lecture du fichier.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function normalizeImageDataUrl(rawUrl: string): Promise<{
+  dataUrl: string;
+  mimeType: string;
+}> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const maxDim = 1400;
+      const scale = Math.min(1, maxDim / Math.max(img.width || 1, img.height || 1));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round((img.width || 800) * scale));
+      canvas.height = Math.max(1, Math.round((img.height || 600) * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Canvas indisponible.'));
+        return;
+      }
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      let out = canvas.toDataURL('image/jpeg', 0.82);
+      if (out.length > MAX_RECEIPT_DATA_URL_LENGTH) {
+        out = canvas.toDataURL('image/jpeg', 0.6);
+      }
+      resolve({ dataUrl: out, mimeType: 'image/jpeg' });
+    };
+    img.onerror = () => reject(new Error('Image bancaire illisible.'));
+    img.src = rawUrl;
+  });
+}
+
+function formatReceiptSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} o`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} Ko`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} Mo`;
 }
 
 export function PremiumModal({
@@ -68,7 +132,10 @@ export function PremiumModal({
     initialPlanId
   );
   const [cycle, setCycle] = useState<BillingCycle>(initialCycle);
-  const [reference, setReference] = useState<string>(() => generateReference());
+  const [reference, setReference] = useState<string>('');
+  const [receiptFile, setReceiptFile] = useState<AttachedReceipt | null>(null);
+  const [isProcessingReceipt, setIsProcessingReceipt] = useState(false);
+  const receiptInputRef = useRef<HTMLInputElement | null>(null);
   const [payerName, setPayerName] = useState(defaultPayerName || '');
   const [payerEmail, setPayerEmail] = useState(defaultPayerEmail || '');
   const [bankOrigin, setBankOrigin] = useState('');
@@ -117,9 +184,11 @@ export function PremiumModal({
     lines.push(
       `${currencyInfo.secondaryLabel} : ${currencyInfo.secondaryCode}`,
       `Adresse agence : ${currencyInfo.bankAddress} (Tél. : ${currencyInfo.agencyPhone})`,
-      `Montant exact : ${formattedAmount}`,
-      `Référence obligatoire : ${reference}`
+      `Montant exact : ${formattedAmount}`
     );
+    if (!receiptFile && reference.trim()) {
+      lines.push(`Référence du virement : ${reference.trim()}`);
+    }
     handleCopy('all', lines.join('\n'), 'RIB complet');
   };
 
@@ -128,7 +197,8 @@ export function PremiumModal({
     const targetCurrency = sub?.currency || selectedCurrency;
     const targetCurrencyCfg = CURRENCIES[targetCurrency];
     const targetAmount = sub?.formattedAmount || formattedAmount;
-    const targetRef = sub?.reference || reference;
+    const targetRef = (sub ? sub.reference : receiptFile ? '' : reference).trim();
+    const targetReceiptName = sub?.receiptFileName || receiptFile?.fileName || '';
     const targetCycle =
       (sub?.cycle || cycle) === 'annual' ? 'Annuel (-25 %)' : 'Mensuel';
     const targetPayer = sub?.payerName || payerName || 'Client PDFExpress';
@@ -146,7 +216,12 @@ export function PremiumModal({
       `Facturation : ${targetCycle}`,
       `Devise de reglement : ${targetCurrencyCfg.label}`,
       `Montant total a virer : ${targetAmount}`,
-      `Reference unique de virement : ${targetRef}`,
+      `Reference de virement : ${
+        targetRef ||
+        (targetReceiptName
+          ? `Non requise (justificatif joint : ${targetReceiptName})`
+          : 'A renseigner par le client')
+      }`,
       ``,
       `2. COORDONNEES BANCAIRES DU BENEFICIAIRE (${targetCurrency})`,
       `Intitule du compte : ${targetCurrencyCfg.beneficiary}`,
@@ -165,7 +240,11 @@ export function PremiumModal({
       `E-mail de facturation : ${targetEmail}`,
       `Date d'execution : ${targetDate}`,
       ``,
-      `Merci d'indiquer imperativement la reference "${targetRef}" dans le libelle de votre virement.`,
+      targetRef
+        ? `Reference declaree par le client : "${targetRef}".`
+        : targetReceiptName
+        ? `Piece justificative bancaire jointe : "${targetReceiptName}".`
+        : `Veuillez renseigner la reference de votre virement ou joindre un justificatif bancaire lors de la confirmation.`,
     ].join('\n');
 
     const pdfDoc = await createFormattedTextPdf(
@@ -177,12 +256,121 @@ export function PremiumModal({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Virement_${targetRef}_${targetCurrency}.pdf`;
+    a.download = targetRef
+      ? `Virement_${targetRef}_${targetCurrency}.pdf`
+      : `Virement_PDFExpress_${targetCurrency}.pdf`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     onNotify('Ordre de virement PDF téléchargé.', 'success');
+  };
+
+  const handleReceiptSelect = async (file: File | undefined | null) => {
+    if (!file) return;
+    if (file.size > MAX_RECEIPT_FILE_BYTES) {
+      onNotify('Le justificatif ne doit pas dépasser 10 Mo.', 'error');
+      return;
+    }
+    const isPdf =
+      file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isImage = file.type.startsWith('image/');
+    if (!isPdf && !isImage) {
+      onNotify(
+        'Format non pris en charge. Joignez une image (JPG, PNG, WebP) ou un fichier PDF bancaire.',
+        'error'
+      );
+      return;
+    }
+
+    setIsProcessingReceipt(true);
+    try {
+      if (isImage) {
+        const rawUrl = await readFileAsDataUrl(file);
+        if (
+          ALLOWED_IMAGE_MIME_RE.test(file.type) &&
+          rawUrl.length <= MAX_RECEIPT_DATA_URL_LENGTH
+        ) {
+          setReceiptFile({
+            fileName: file.name,
+            mimeType: file.type,
+            dataUrl: rawUrl,
+            sizeLabel: formatReceiptSize(file.size),
+          });
+        } else {
+          const normalized = await normalizeImageDataUrl(rawUrl);
+          if (normalized.dataUrl.length > 695000) {
+            throw new Error(
+              'Image trop volumineuse même après compression. Essayez une capture plus légère.'
+            );
+          }
+          setReceiptFile({
+            fileName: file.name,
+            mimeType: normalized.mimeType,
+            dataUrl: normalized.dataUrl,
+            sizeLabel: formatReceiptSize(file.size),
+          });
+        }
+        onNotify('Justificatif image ajouté.', 'success');
+      } else {
+        const rawPdfUrl = await readFileAsDataUrl(file);
+        if (rawPdfUrl.length <= MAX_RECEIPT_DATA_URL_LENGTH) {
+          setReceiptFile({
+            fileName: file.name,
+            mimeType: 'application/pdf',
+            dataUrl: rawPdfUrl,
+            sizeLabel: formatReceiptSize(file.size),
+          });
+          onNotify('Justificatif PDF bancaire ajouté.', 'success');
+        } else {
+          const buf = await file.arrayBuffer();
+          const pdfDoc = await loadPdfJsDocument(buf);
+          let renderedUrl = await renderPdfPageToDataURL(
+            pdfDoc,
+            1,
+            1.4,
+            'image/jpeg',
+            0.82
+          );
+          if (renderedUrl.length > MAX_RECEIPT_DATA_URL_LENGTH) {
+            renderedUrl = await renderPdfPageToDataURL(
+              pdfDoc,
+              1,
+              1.0,
+              'image/jpeg',
+              0.68
+            );
+          }
+          if (renderedUrl.length > 695000) {
+            throw new Error(
+              'PDF bancaire trop volumineux. Importez un reçu plus léger ou une capture image.'
+            );
+          }
+          setReceiptFile({
+            fileName: `${file.name.replace(/\.pdf$/i, '')}_page1.jpg`,
+            mimeType: 'image/jpeg',
+            dataUrl: renderedUrl,
+            sizeLabel: formatReceiptSize(file.size),
+          });
+          onNotify(
+            'Reçu PDF volumineux converti en aperçu haute netteté pour l’envoi.',
+            'info'
+          );
+        }
+      }
+    } catch (err) {
+      onNotify(
+        err instanceof Error
+          ? err.message
+          : 'Impossible de lire ce justificatif bancaire.',
+        'error'
+      );
+    } finally {
+      setIsProcessingReceipt(false);
+      if (receiptInputRef.current) {
+        receiptInputRef.current.value = '';
+      }
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -195,8 +383,12 @@ export function PremiumModal({
       onNotify('Veuillez saisir une adresse e-mail valide.', 'error');
       return;
     }
-    if (!reference.trim()) {
-      onNotify('Veuillez saisir une référence de virement.', 'error');
+    const submittedReference = receiptFile ? '' : reference.trim();
+    if (!submittedReference && !receiptFile) {
+      onNotify(
+        'Veuillez saisir une référence de paiement ou joindre un justificatif bancaire (image ou PDF).',
+        'error'
+      );
       return;
     }
 
@@ -206,7 +398,7 @@ export function PremiumModal({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          reference: reference.trim(),
+          reference: submittedReference,
           planId,
           planLabel: selectedPlan.name,
           cycle,
@@ -217,6 +409,13 @@ export function PremiumModal({
           payerEmail: payerEmail.trim(),
           bankOrigin: bankOrigin.trim(),
           transferDate,
+          ...(receiptFile
+            ? {
+                receiptFileName: receiptFile.fileName,
+                receiptMimeType: receiptFile.mimeType,
+                receiptDataUrl: receiptFile.dataUrl,
+              }
+            : {}),
         }),
       });
       const data = (await res.json()) as {
@@ -233,7 +432,7 @@ export function PremiumModal({
       if (authUserId) {
         await submitPremiumRequestToCloud({
           userId: authUserId,
-          reference: reference.trim(),
+          reference: submittedReference,
           planId,
           planLabel: selectedPlan.name,
           cycle,
@@ -244,6 +443,13 @@ export function PremiumModal({
           payerEmail: payerEmail.trim(),
           bankOrigin: bankOrigin.trim(),
           transferDate,
+          ...(receiptFile
+            ? {
+                receiptFileName: receiptFile.fileName,
+                receiptMimeType: receiptFile.mimeType,
+                receiptDataUrl: receiptFile.dataUrl,
+              }
+            : {}),
         });
       } else if (onRequireAuth) {
         onNotify(
@@ -253,8 +459,11 @@ export function PremiumModal({
       }
 
       onTransferSubmitted(data.submission);
+      const proofMsg = data.submission.reference
+        ? data.submission.reference
+        : `justificatif « ${data.submission.receiptFileName || 'pièce jointe'} »`;
       onNotify(
-        `Demande d'activation ${data.submission.reference} (${formattedAmount}) transmise !`,
+        `Demande d'activation (${proofMsg} · ${formattedAmount}) transmise !`,
         'success'
       );
     } catch (err) {
@@ -334,7 +543,23 @@ export function PremiumModal({
                           PDFExpress {activeTransfer.planLabel} ({activeTransfer.formattedAmount})
                         </h3>
                         <p className="text-xs text-neutral-600 dark:text-neutral-400 mt-1">
-                          Référence : <strong className="font-mono">{activeTransfer.reference}</strong> · Titulaire : {activeTransfer.payerName} ({activeTransfer.payerEmail})
+                          {activeTransfer.reference ? (
+                            <>
+                              Référence :{' '}
+                              <strong className="font-mono">
+                                {activeTransfer.reference}
+                              </strong>
+                            </>
+                          ) : (
+                            <>
+                              Justificatif joint :{' '}
+                              <strong>
+                                {activeTransfer.receiptFileName || 'Pièce bancaire'}
+                              </strong>
+                            </>
+                          )}{' '}
+                          · Titulaire : {activeTransfer.payerName} (
+                          {activeTransfer.payerEmail})
                         </p>
                       </div>
                     </div>
@@ -362,19 +587,36 @@ export function PremiumModal({
                   </div>
 
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-                    <button
-                      type="button"
-                      onClick={() => handleDownloadTransferPdf(activeTransfer)}
-                      className="px-5 py-2.5 rounded-xl bg-brand-red hover:bg-brand-redHover text-white text-xs font-bold inline-flex items-center gap-2 transition-colors"
-                    >
-                      <Download className="w-4 h-4" />
-                      <span>Télécharger le justificatif PDF</span>
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadTransferPdf(activeTransfer)}
+                        className="px-5 py-2.5 rounded-xl bg-brand-red hover:bg-brand-redHover text-white text-xs font-bold inline-flex items-center gap-2 transition-colors"
+                      >
+                        <Download className="w-4 h-4" />
+                        <span>Télécharger le justificatif PDF</span>
+                      </button>
+
+                      {activeTransfer.receiptDataUrl && (
+                        <a
+                          href={activeTransfer.receiptDataUrl}
+                          download={
+                            activeTransfer.receiptFileName ||
+                            'justificatif-bancaire'
+                          }
+                          className="px-4 py-2.5 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-white dark:bg-neutral-900 text-xs font-bold text-emerald-700 dark:text-emerald-300 hover:border-emerald-500 inline-flex items-center gap-1.5 transition-colors"
+                        >
+                          <Paperclip className="w-3.5 h-3.5" />
+                          <span>Pièce jointe</span>
+                        </a>
+                      )}
+                    </div>
 
                     <button
                       type="button"
                       onClick={() => {
-                        setReference(generateReference());
+                        setReference('');
+                        setReceiptFile(null);
                         onResetTransfer();
                       }}
                       className="px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 text-xs font-bold text-neutral-700 dark:text-neutral-300 hover:border-brand-red inline-flex items-center gap-1.5 transition-colors"
@@ -561,13 +803,17 @@ export function PremiumModal({
                             value: formattedAmount,
                             highlight: true,
                           },
-                          {
-                            key: 'ref',
-                            label: 'Motif / Référence obligatoire',
-                            value: reference,
-                            mono: true,
-                            highlight: true,
-                          },
+                          ...(!receiptFile && reference.trim()
+                            ? [
+                                {
+                                  key: 'ref',
+                                  label: 'Référence de paiement saisie',
+                                  value: reference.trim(),
+                                  mono: true,
+                                  highlight: true,
+                                },
+                              ]
+                            : []),
                         ].map((row) => (
                           <div
                             key={row.key}
@@ -698,23 +944,112 @@ export function PremiumModal({
                           </div>
                         </div>
 
-                        <div>
-                          <label className="block text-[11px] font-bold uppercase text-neutral-500 mb-1">
-                            Référence de l’ordre de virement *
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            value={reference}
-                            onChange={(e) => setReference(e.target.value)}
-                            className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-xs sm:text-sm font-mono outline-none focus:border-brand-red"
-                          />
+                        <div className="pt-1 border-t border-neutral-200 dark:border-neutral-800 space-y-3">
+                          <p className="text-[11px] font-extrabold uppercase tracking-wider text-neutral-600 dark:text-neutral-300">
+                            Preuve de paiement (au choix : référence OU fichier) *
+                          </p>
+
+                          <div>
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <label className="block text-[11px] font-bold uppercase text-neutral-500">
+                                Pièce justificative (Image ou PDF bancaire)
+                              </label>
+                              {reference.trim() && !receiptFile && (
+                                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                  Facultatif (référence saisie)
+                                </span>
+                              )}
+                            </div>
+
+                            <input
+                              ref={receiptInputRef}
+                              type="file"
+                              accept="image/*,.pdf,application/pdf"
+                              onChange={(e) =>
+                                void handleReceiptSelect(e.target.files?.[0])
+                              }
+                              className="hidden"
+                            />
+
+                            {receiptFile ? (
+                              <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  {receiptFile.mimeType.startsWith('image/') ? (
+                                    <img
+                                      src={receiptFile.dataUrl}
+                                      alt={receiptFile.fileName}
+                                      className="w-10 h-10 rounded-lg object-cover border border-emerald-200 dark:border-emerald-800 shrink-0"
+                                    />
+                                  ) : (
+                                    <span className="w-10 h-10 rounded-lg bg-red-100 dark:bg-red-950/60 text-brand-red flex items-center justify-center shrink-0">
+                                      <FileText className="w-5 h-5" />
+                                    </span>
+                                  )}
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-bold text-neutral-900 dark:text-white truncate">
+                                      {receiptFile.fileName}
+                                    </p>
+                                    <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                                      Justificatif prêt · {receiptFile.sizeLabel}
+                                    </p>
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setReceiptFile(null)}
+                                  aria-label="Retirer le justificatif"
+                                  className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-[11px] font-bold text-neutral-600 dark:text-neutral-300 hover:text-brand-red inline-flex items-center gap-1 shrink-0"
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                  <span>Retirer</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={isProcessingReceipt}
+                                onClick={() => receiptInputRef.current?.click()}
+                                onDragOver={(e) => {
+                                  e.preventDefault();
+                                }}
+                                onDrop={(e) => {
+                                  e.preventDefault();
+                                  void handleReceiptSelect(
+                                    e.dataTransfer.files?.[0]
+                                  );
+                                }}
+                                className="w-full px-3 py-3 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-600 hover:border-brand-red bg-neutral-50/70 dark:bg-neutral-900/40 text-xs text-neutral-600 dark:text-neutral-300 flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                              >
+                                <Upload className="w-4 h-4 text-brand-red shrink-0" />
+                                <span>
+                                  {isProcessingReceipt
+                                    ? 'Préparation du justificatif...'
+                                    : 'Joindre un reçu bancaire (capture JPG/PNG ou PDF)'}
+                                </span>
+                              </button>
+                            )}
+                          </div>
+
+                          {!receiptFile && (
+                            <div>
+                              <label className="block text-[11px] font-bold uppercase text-neutral-500 mb-1">
+                                Ou référence de paiement / virement *
+                              </label>
+                              <input
+                                type="text"
+                                value={reference}
+                                onChange={(e) => setReference(e.target.value)}
+                                placeholder="Saisissez la référence figurant sur votre virement"
+                                className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-xs sm:text-sm font-mono outline-none focus:border-brand-red"
+                              />
+                            </div>
+                          )}
                         </div>
                       </div>
 
                       <button
                         type="submit"
-                        disabled={isSubmitting}
+                        disabled={isSubmitting || isProcessingReceipt}
                         className="w-full py-3 px-5 rounded-xl bg-brand-red hover:bg-brand-redHover text-white font-bold text-sm transition-colors disabled:opacity-50"
                       >
                         {isSubmitting

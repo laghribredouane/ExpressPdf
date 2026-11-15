@@ -212,23 +212,9 @@ export async function syncDeviceAndMaybeActivateTrial(
     };
   }
 
-  // Essai automatique de 7 jours UNIQUEMENT si e-mail vérifié, statut 'free', jamais réclamé
+  // Essai automatique de 7 jours UNIQUEMENT si e-mail vérifié, statut 'free', jamais réclamé.
+  // L'unicité par empreinte est garantie atomiquement côté serveur par les règles Firestore sur device_trials.
   if (user.emailVerified && currentStatus === 'free' && !trialClaimed) {
-    let lockSnap;
-    try {
-      lockSnap = await getDoc(trialLockRef);
-    } catch {
-      lockSnap = null;
-    }
-
-    if (lockSnap && lockSnap.exists()) {
-      return {
-        isBanned: false,
-        trialGranted: false,
-        trialBlockedByDevice: true,
-      };
-    }
-
     const trialExpiresAt = Date.now() + SEVEN_DAYS_MS;
     try {
       const batch = writeBatch(db);
@@ -252,8 +238,7 @@ export async function syncDeviceAndMaybeActivateTrial(
         trialBlockedByDevice: false,
         trialExpiresAt,
       };
-    } catch (err) {
-      console.warn('Trial activation blocked by device lock or rule:', err);
+    } catch {
       return {
         isBanned: false,
         trialGranted: false,
@@ -301,11 +286,12 @@ export async function fetchLast24hUsageCount(uid: string): Promise<number> {
     const q = query(
       collection(db, 'usage_logs'),
       where('userId', '==', uid),
-      limit(100)
+      limit(500)
     );
     const snap = await getDocs(q);
     return snap.docs.filter((d) => {
-      const ms = Number(d.data()?.createdAtMs || 0);
+      const data = d.data();
+      const ms = tsToMs(data?.createdAt) ?? Number(data?.createdAtMs || 0);
       return ms >= sinceMs;
     }).length;
   } catch (err) {
@@ -351,11 +337,19 @@ export async function submitPremiumRequestToCloud(params: {
   payerEmail: string;
   bankOrigin?: string;
   transferDate: string;
+  receiptFileName?: string;
+  receiptMimeType?: string;
+  receiptDataUrl?: string;
   note?: string;
 }): Promise<string> {
   const reqId = sanitizeId(crypto.randomUUID());
   const path = `premium_requests/${reqId}`;
   try {
+    const hasReceipt =
+      typeof params.receiptDataUrl === 'string' &&
+      params.receiptDataUrl.length >= 20 &&
+      params.receiptDataUrl.length <= 700000;
+
     await setDoc(doc(db, 'premium_requests', reqId), {
       id: reqId,
       userId: params.userId,
@@ -370,6 +364,17 @@ export async function submitPremiumRequestToCloud(params: {
       payerEmail: params.payerEmail.trim().slice(0, 254),
       bankOrigin: (params.bankOrigin || '').trim().slice(0, 120),
       transferDate: params.transferDate.trim().slice(0, 40),
+      ...(hasReceipt
+        ? {
+            receiptFileName: (params.receiptFileName || 'justificatif-bancaire')
+              .trim()
+              .slice(0, 255),
+            receiptMimeType: (params.receiptMimeType || 'image/jpeg')
+              .trim()
+              .slice(0, 80),
+            receiptDataUrl: params.receiptDataUrl,
+          }
+        : {}),
       note: (params.note || '').trim().slice(0, 500),
       status: 'pending',
       createdAt: serverTimestamp(),
@@ -407,6 +412,15 @@ export function subscribeMyPremiumRequests(
         payerEmail: String(data.payerEmail || ''),
         bankOrigin: data.bankOrigin ? String(data.bankOrigin) : undefined,
         transferDate: String(data.transferDate || ''),
+        receiptFileName: data.receiptFileName
+          ? String(data.receiptFileName)
+          : undefined,
+        receiptMimeType: data.receiptMimeType
+          ? String(data.receiptMimeType)
+          : undefined,
+        receiptDataUrl: data.receiptDataUrl
+          ? String(data.receiptDataUrl)
+          : undefined,
         note: data.note ? String(data.note) : undefined,
         status:
           data.status === 'approved' || data.status === 'rejected'
@@ -481,6 +495,15 @@ export async function fetchAdminDashboardData(): Promise<AdminDashboardSnapshot>
           payerEmail: String(data.payerEmail || ''),
           bankOrigin: data.bankOrigin ? String(data.bankOrigin) : undefined,
           transferDate: String(data.transferDate || ''),
+          receiptFileName: data.receiptFileName
+            ? String(data.receiptFileName)
+            : undefined,
+          receiptMimeType: data.receiptMimeType
+            ? String(data.receiptMimeType)
+            : undefined,
+          receiptDataUrl: data.receiptDataUrl
+            ? String(data.receiptDataUrl)
+            : undefined,
           note: data.note ? String(data.note) : undefined,
           status:
             data.status === 'approved' || data.status === 'rejected'

@@ -155,7 +155,11 @@ export default defineConfig(() => {
           globPatterns: [
             '**/*.{js,css,html,ico,png,svg,woff,woff2,mjs,wasm}',
           ],
-          globIgnores: ['**/assets/aistudio/**', '**/ads.txt'],
+          globIgnores: [
+            '**/assets/aistudio/**',
+            '**/ads.txt',
+            '**/ort-wasm*.wasm',
+          ],
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [
@@ -200,12 +204,12 @@ export default defineConfig(() => {
               },
             },
             {
-              urlPattern: /^https:\/\/(?:cdn\.jsdelivr\.net|unpkg\.com|tessdata\.projectnaptha\.com)\/.*$/i,
+              urlPattern: /^https:\/\/(?:cdn\.jsdelivr\.net|unpkg\.com|tessdata\.projectnaptha\.com|staticimgly\.com)\/.*$/i,
               handler: 'CacheFirst',
               options: {
                 cacheName: 'ai-ocr-wasm-cdn-cache',
                 expiration: {
-                  maxEntries: 30,
+                  maxEntries: 60,
                   maxAgeSeconds: 60 * 60 * 24 * 90,
                 },
                 cacheableResponse: {

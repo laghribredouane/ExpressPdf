@@ -663,4 +663,61 @@ export const TOOL_DOCUMENTATIONS: Record<ToolId, ToolDocumentationItem> = {
       'Idéal pour valider des factures, contrats, devis et attestations administratives.',
     ],
   },
+  img_bg_remove: {
+    toolId: 'img_bg_remove',
+    title: 'Suppresseur d’arrière-plan IA',
+    category: 'Studio Image & OCR',
+    summary: 'Détourez automatiquement vos photos sans aucun envoi serveur grâce au modèle ONNX/WASM local.',
+    steps: [
+      'Déposez une image JPG, PNG ou WebP.',
+      'Patientez pendant l’analyse neuronale locale dans votre navigateur.',
+      'Choisissez un fond transparent, uni ou dégradé.',
+      'Téléchargez le PNG ou envoyez-le directement vers JPG en PDF.',
+    ],
+    options: [
+      { name: 'Arrière-plans multiples', description: 'Transparent, blanc, noir, sélecteur de couleur ou dégradés.' },
+      { name: 'Transfert vers PDF', description: 'Convertissez le résultat détouré en document PDF en un clic.' },
+    ],
+    proTips: [
+      'Le modèle IA est mis en cache dans votre navigateur après la première utilisation pour des détourages instantanés.',
+    ],
+  },
+  img_compress: {
+    toolId: 'img_compress',
+    title: 'Compresseur & Convertisseur d’Images',
+    category: 'Studio Image & OCR',
+    summary: 'Réduisez le poids de vos images et convertissez vers WebP, JPEG ou PNG avec curseur Avant/Après en direct.',
+    steps: [
+      'Importez une image (ou plusieurs en mode lot Premium).',
+      'Réglez la qualité (10–100 %), le redimensionnement et le format de sortie.',
+      'Comparez la netteté et le gain de poids grâce au curseur Avant/Après.',
+      'Téléchargez l’image optimisée ou l’archive ZIP complète.',
+    ],
+    options: [
+      { name: 'Formats WebP / JPEG / PNG', description: 'Conversion instantanée via Canvas API et Web Worker.' },
+      { name: 'Mode lot ZIP', description: 'Compressez des dizaines d’images en une seule archive (Premium).' },
+    ],
+    proTips: [
+      'Le format WebP à 80 % offre souvent une réduction de 60 à 80 % sans perte visuelle perceptible.',
+    ],
+  },
+  ocr_extract: {
+    toolId: 'ocr_extract',
+    title: 'Extracteur OCR Multilingue',
+    category: 'Studio Image & OCR',
+    summary: 'Reconnaissance optique de caractères Arabe, Français et Anglais directement dans votre navigateur.',
+    steps: [
+      'Importez une photo (JPG, PNG, WebP) ou un document PDF scanné.',
+      'Sélectionnez la langue (Arabe, Français, Anglais ou Multilingue).',
+      'Relisez et modifiez le texte extrait avec alignement RTL/LTR automatique.',
+      'Copiez le texte, téléchargez en .TXT ou exportez un PDF indexable.',
+    ],
+    options: [
+      { name: 'Arabe + Français + Anglais', description: 'Prise en charge native des écritures RTL et latines.' },
+      { name: 'PDF indexable', description: 'Créez un PDF contenant la couche texte sélectionnable et consultable.' },
+    ],
+    proTips: [
+      'Pour les documents mixtes franco-arabes, utilisez le mode Multilingue (AR + FR + EN).',
+    ],
+  },
 };

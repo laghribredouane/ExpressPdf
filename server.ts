@@ -14,6 +14,13 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+app.disable('x-powered-by');
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
 app.use(express.json({ limit: '35mb' }));
 
 app.get('/ads.txt', (_req, res) => {
@@ -594,40 +601,78 @@ app.post('/api/billing/bank-transfer', (req, res) => {
     payerEmail,
     bankOrigin,
     transferDate,
+    receiptFileName,
+    receiptMimeType,
+    receiptDataUrl,
   } = (req.body || {}) as Record<string, unknown>;
+
+  const cleanRef = typeof reference === 'string' ? reference.trim().slice(0, 80) : '';
+  const cleanReceiptDataUrl =
+    typeof receiptDataUrl === 'string' &&
+    receiptDataUrl.length >= 20 &&
+    receiptDataUrl.length <= 700000 &&
+    /^data:(image\/(?:jpeg|jpg|png|webp|gif)|application\/pdf);base64,[A-Za-z0-9+/=]+$/.test(
+      receiptDataUrl
+    )
+      ? receiptDataUrl
+      : '';
+  const cleanReceiptName =
+    typeof receiptFileName === 'string'
+      ? receiptFileName.trim().slice(0, 255)
+      : '';
+  const cleanReceiptMime =
+    typeof receiptMimeType === 'string'
+      ? receiptMimeType.trim().slice(0, 80)
+      : '';
 
   if (
     typeof payerName !== 'string' ||
     !payerName.trim() ||
     typeof payerEmail !== 'string' ||
     !payerEmail.includes('@') ||
-    typeof reference !== 'string' ||
-    !reference.trim() ||
+    (!cleanRef && !cleanReceiptDataUrl) ||
     (currency !== 'MAD' && currency !== 'USD' && currency !== 'EUR')
   ) {
     res.status(400).json({
       error:
-        'Veuillez renseigner un nom valide, une adresse e-mail, une devise (MAD, USD ou EUR) et une référence de virement.',
+        'Veuillez renseigner un nom valide, une adresse e-mail, une devise (MAD, USD ou EUR) et saisir soit une référence de paiement, soit joindre un justificatif bancaire (image ou PDF).',
     });
     return;
   }
 
+  const safeAmount =
+    typeof amount === 'number' && Number.isFinite(amount)
+      ? Math.max(0, Math.min(1000000, amount))
+      : Math.max(0, Math.min(1000000, Number(amount) || 0));
+
   const record = {
-    reference: reference.trim(),
+    reference: cleanRef,
     planId: planId === 'premium_team' ? 'premium_team' : 'premium_pro',
-    planLabel: typeof planLabel === 'string' ? planLabel : 'Premium Pro',
+    planLabel:
+      typeof planLabel === 'string'
+        ? planLabel.trim().slice(0, 80) || 'Premium Pro'
+        : 'Premium Pro',
     cycle: cycle === 'annual' ? 'annual' : 'monthly',
     currency,
-    amount: Number(amount) || 0,
+    amount: safeAmount,
     formattedAmount:
-      typeof formattedAmount === 'string' ? formattedAmount : `${amount} ${currency}`,
-    payerName: payerName.trim(),
-    payerEmail: payerEmail.trim(),
-    bankOrigin: typeof bankOrigin === 'string' ? bankOrigin.trim() : '',
+      typeof formattedAmount === 'string'
+        ? formattedAmount.trim().slice(0, 40)
+        : `${safeAmount} ${currency}`,
+    payerName: payerName.trim().slice(0, 120),
+    payerEmail: payerEmail.trim().slice(0, 254),
+    bankOrigin: typeof bankOrigin === 'string' ? bankOrigin.trim().slice(0, 120) : '',
     transferDate:
       typeof transferDate === 'string' && transferDate
-        ? transferDate
+        ? transferDate.trim().slice(0, 40)
         : new Date().toISOString().slice(0, 10),
+    ...(cleanReceiptDataUrl
+      ? {
+          receiptFileName: cleanReceiptName || 'justificatif-bancaire',
+          receiptMimeType: cleanReceiptMime || 'application/octet-stream',
+          receiptDataUrl: cleanReceiptDataUrl,
+        }
+      : {}),
     status: 'pending_verification' as const,
     createdAt: Date.now(),
   };
@@ -675,6 +720,10 @@ const FALLBACK_TOOL_IDS = [
   'aiocr',
   'socialpost',
   'workflow',
+  'stampgenerator',
+  'img_bg_remove',
+  'img_compress',
+  'ocr_extract',
 ];
 
 function getDynamicToolIds(): string[] {
@@ -779,7 +828,7 @@ function isAllowedAdSenseVerifyHost(hostname: string, req: express.Request): boo
   if (reqHost && lower === reqHost) {
     return true;
   }
-  if (lower.endsWith('.run.app') && (lower.includes('pdfexpress') || lower.includes('ais-'))) {
+  if (lower.endsWith('.run.app') && lower.startsWith('ais-')) {
     return true;
   }
   return false;

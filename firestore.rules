@@ -1,7 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Filet de sécurité global (refus par défaut)
+    // 1. Verrouillage par défaut : refus total de tout accès non explicitement autorisé
     match /{document=**} {
       allow read, write: if false;
     }
@@ -11,16 +11,36 @@ service cloud.firestore {
     }
 
     function isValidId(id) {
-      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+      return id is string
+        && id.size() >= 1
+        && id.size() <= 128
+        && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidDeviceFingerprint(fp) {
+      return fp is string
+        && fp.size() > 0
+        && fp.size() <= 256
+        && fp.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isEmailVerifiedToken() {
+      return isSignedIn()
+        && ('email_verified' in request.auth.token)
+        && request.auth.token.email_verified == true;
+    }
+
     function isAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email == 'laghribredouane@gmail.com' && request.auth.token.email_verified == true)
+        (
+          ('email' in request.auth.token)
+          && request.auth.token.email == 'laghribredouane@gmail.com'
+          && isEmailVerifiedToken()
+        )
         || exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -84,7 +104,8 @@ service cloud.firestore {
         && data.trialClaimed is bool
         && data.premiumExpiresAt is number
         && data.premiumExpiresAt >= 0
-        && (!('lastDeviceFingerprint' in data) || (data.lastDeviceFingerprint is string && isValidId(data.lastDeviceFingerprint)))
+        && data.premiumExpiresAt <= 32503680000000
+        && (!('lastDeviceFingerprint' in data) || isValidDeviceFingerprint(data.lastDeviceFingerprint))
         && (!('adminNote' in data) || (data.adminNote is string && data.adminNote.size() <= 300))
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -126,15 +147,15 @@ service cloud.firestore {
         && data.sizeFormatted.size() <= 40
         && data.processedAt is number
         && data.processedAt > 0
+        && data.processedAt <= (request.time.toMillis() + 300000)
         && data.createdAt is timestamp;
     }
 
     function isValidDeviceTrial(data, deviceFingerprint) {
       return data.keys().hasAll(['deviceFingerprint', 'claimedByUid', 'claimedAt'])
         && data.keys().hasOnly(['deviceFingerprint', 'claimedByUid', 'claimedAt'])
-        && data.deviceFingerprint is string
+        && isValidDeviceFingerprint(data.deviceFingerprint)
         && data.deviceFingerprint == deviceFingerprint
-        && isValidId(data.deviceFingerprint)
         && data.claimedByUid is string
         && data.claimedByUid == request.auth.uid
         && isValidId(data.claimedByUid)
@@ -172,8 +193,7 @@ service cloud.firestore {
         && data.userId is string
         && data.userId == request.auth.uid
         && isValidId(data.userId)
-        && data.deviceFingerprint is string
-        && isValidId(data.deviceFingerprint)
+        && isValidDeviceFingerprint(data.deviceFingerprint)
         && data.userAgent is string
         && data.userAgent.size() >= 1
         && data.userAgent.size() <= 300
@@ -202,8 +222,7 @@ service cloud.firestore {
         && data.userId is string
         && data.userId == request.auth.uid
         && isValidId(data.userId)
-        && data.deviceFingerprint is string
-        && isValidId(data.deviceFingerprint)
+        && isValidDeviceFingerprint(data.deviceFingerprint)
         && data.toolId is string
         && data.toolId.size() >= 1
         && data.toolId.size() <= 40
@@ -215,7 +234,8 @@ service cloud.firestore {
         && data.totalBytes >= 0
         && data.totalBytes <= 1073741824
         && data.createdAtMs is number
-        && data.createdAtMs > 0
+        && data.createdAtMs >= (request.time.toMillis() - 300000)
+        && data.createdAtMs <= (request.time.toMillis() + 300000)
         && data.createdAt is timestamp;
     }
 
@@ -251,6 +271,9 @@ service cloud.firestore {
           'payerEmail',
           'bankOrigin',
           'transferDate',
+          'receiptFileName',
+          'receiptMimeType',
+          'receiptDataUrl',
           'note',
           'status',
           'reviewedBy',
@@ -263,8 +286,24 @@ service cloud.firestore {
         && data.userId is string
         && isValidId(data.userId)
         && data.reference is string
-        && data.reference.size() >= 1
         && data.reference.size() <= 80
+        && (!('receiptFileName' in data) || (data.receiptFileName is string && data.receiptFileName.size() >= 1 && data.receiptFileName.size() <= 255))
+        && (!('receiptMimeType' in data) || (data.receiptMimeType is string && data.receiptMimeType.size() >= 1 && data.receiptMimeType.size() <= 80))
+        && (!('receiptDataUrl' in data) || (
+          data.receiptDataUrl is string
+          && data.receiptDataUrl.size() >= 20
+          && data.receiptDataUrl.size() <= 700000
+          && data.receiptDataUrl.matches('^data:(image\\/(jpeg|jpg|png|webp|gif)|application\\/pdf);base64,[A-Za-z0-9+/=]+$')
+        ))
+        && (
+          data.reference.size() >= 1
+          || (
+            ('receiptDataUrl' in data)
+            && ('receiptFileName' in data)
+            && ('receiptMimeType' in data)
+            && data.receiptDataUrl.size() >= 20
+          )
+        )
         && data.planId is string
         && (data.planId == 'premium_pro' || data.planId == 'premium_team')
         && data.planLabel is string
@@ -276,6 +315,7 @@ service cloud.firestore {
         && (data.currency == 'MAD' || data.currency == 'USD' || data.currency == 'EUR')
         && data.amount is number
         && data.amount >= 0
+        && data.amount <= 1000000
         && data.formattedAmount is string
         && data.formattedAmount.size() >= 1
         && data.formattedAmount.size() <= 40
@@ -300,9 +340,8 @@ service cloud.firestore {
     function isValidBannedDevice(data, deviceFingerprint) {
       return data.keys().hasAll(['deviceFingerprint', 'reason', 'bannedByUid', 'createdAt'])
         && data.keys().hasOnly(['deviceFingerprint', 'reason', 'bannedByUid', 'createdAt'])
-        && data.deviceFingerprint is string
+        && isValidDeviceFingerprint(data.deviceFingerprint)
         && data.deviceFingerprint == deviceFingerprint
-        && isValidId(data.deviceFingerprint)
         && data.reason is string
         && data.reason.size() >= 1
         && data.reason.size() <= 300
@@ -317,29 +356,41 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // 2. Protection stricte des empreintes d'appareils (verrou d'essai gratuit 7j)
     match /device_trials/{deviceFingerprint} {
-      allow get: if isSignedIn() && isValidId(deviceFingerprint);
-      allow list: if isAdmin();
+      allow get: if isSignedIn()
+        && isValidDeviceFingerprint(deviceFingerprint)
+        && resource != null
+        && existing().claimedByUid == request.auth.uid;
+      allow list: if false;
       allow create: if isSignedIn()
-        && request.auth.token.email_verified == true
-        && isValidId(deviceFingerprint)
+        && isEmailVerifiedToken()
+        && isValidDeviceFingerprint(deviceFingerprint)
         && isValidDeviceTrial(incoming(), deviceFingerprint)
+        && incoming().claimedByUid == request.auth.uid
         && incoming().claimedAt == request.time
         && !exists(/databases/$(database)/documents/banned_devices/$(deviceFingerprint));
-      allow update: if false;
-      allow delete: if isAdmin();
+      allow update: if isSignedIn()
+        && isValidDeviceFingerprint(deviceFingerprint)
+        && isValidDeviceTrial(incoming(), deviceFingerprint)
+        && existing().claimedByUid == request.auth.uid
+        && incoming().claimedByUid == existing().claimedByUid
+        && incoming().deviceFingerprint == existing().deviceFingerprint
+        && incoming().claimedAt == existing().claimedAt
+        && incoming().diff(existing()).affectedKeys().size() == 0;
+      allow delete: if false;
     }
 
     match /banned_devices/{deviceFingerprint} {
-      allow get: if isSignedIn() && isValidId(deviceFingerprint);
+      allow get: if isSignedIn() && isValidDeviceFingerprint(deviceFingerprint);
       allow list: if isAdmin();
       allow create: if isAdmin()
-        && isValidId(deviceFingerprint)
+        && isValidDeviceFingerprint(deviceFingerprint)
         && isValidBannedDevice(incoming(), deviceFingerprint)
         && incoming().bannedByUid == request.auth.uid
         && incoming().createdAt == request.time;
       allow update: if false;
-      allow delete: if isAdmin() && isValidId(deviceFingerprint);
+      allow delete: if isAdmin() && isValidDeviceFingerprint(deviceFingerprint);
     }
 
     match /user_devices/{recordId} {
@@ -362,13 +413,14 @@ service cloud.firestore {
         && incoming().lastSeenAt == request.time;
       allow update: if isSignedIn()
         && isValidId(recordId)
+        && existing().userId == request.auth.uid
         && isValidUserDevice(incoming(), recordId)
         && incoming().userId == existing().userId
         && incoming().deviceFingerprint == existing().deviceFingerprint
         && incoming().firstUsedAt == existing().firstUsedAt
         && incoming().lastSeenAt == request.time
         && incoming().diff(existing()).affectedKeys().hasOnly(['userAgent', 'os', 'browser', 'screenResolution', 'lastIp', 'lastSeenAt']);
-      allow delete: if isAdmin() && isValidId(recordId);
+      allow delete: if false;
     }
 
     match /usage_logs/{logId} {
@@ -379,7 +431,7 @@ service cloud.firestore {
         && isValidUsageLog(incoming(), logId)
         && incoming().createdAt == request.time;
       allow update: if false;
-      allow delete: if isAdmin() && isValidId(logId);
+      allow delete: if false;
     }
 
     match /premium_requests/{requestId} {
@@ -390,6 +442,7 @@ service cloud.firestore {
         && isValidPremiumRequest(incoming(), requestId)
         && incoming().userId == request.auth.uid
         && incoming().status == 'pending'
+        && !('reviewedBy' in incoming())
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isAdmin()
@@ -398,8 +451,9 @@ service cloud.firestore {
         && incoming().userId == existing().userId
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
+        && incoming().reviewedBy == request.auth.uid
         && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reviewedBy', 'updatedAt']);
-      allow delete: if isAdmin() && isValidId(requestId);
+      allow delete: if false;
     }
 
     match /users/{userId} {
@@ -413,6 +467,7 @@ service cloud.firestore {
         && incoming().subscriptionStatus == 'free'
         && incoming().trialClaimed == false
         && incoming().premiumExpiresAt == 0
+        && incoming().emailVerified == isEmailVerifiedToken()
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isValidId(userId)
@@ -429,6 +484,7 @@ service cloud.firestore {
             && incoming().subscriptionStatus == existing().subscriptionStatus
             && incoming().trialClaimed == existing().trialClaimed
             && incoming().premiumExpiresAt == existing().premiumExpiresAt
+            && incoming().emailVerified == isEmailVerifiedToken()
             && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'email', 'emailVerified', 'lastDeviceFingerprint', 'updatedAt'])
           )
           || (
@@ -438,11 +494,12 @@ service cloud.firestore {
             && incoming().subscriptionStatus == 'free'
             && incoming().trialClaimed == false
             && incoming().premiumExpiresAt == 0
+            && incoming().emailVerified == isEmailVerifiedToken()
             && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'email', 'emailVerified', 'lastDeviceFingerprint', 'role', 'subscriptionStatus', 'trialClaimed', 'premiumExpiresAt', 'updatedAt'])
           )
           || (
             isOwner(userId)
-            && request.auth.token.email_verified == true
+            && isEmailVerifiedToken()
             && ('subscriptionStatus' in existing())
             && existing().subscriptionStatus == 'free'
             && existing().trialClaimed == false
@@ -450,8 +507,7 @@ service cloud.firestore {
             && incoming().subscriptionStatus == 'trial_active'
             && incoming().trialClaimed == true
             && incoming().emailVerified == true
-            && incoming().lastDeviceFingerprint is string
-            && isValidId(incoming().lastDeviceFingerprint)
+            && isValidDeviceFingerprint(incoming().lastDeviceFingerprint)
             && incoming().premiumExpiresAt > request.time.toMillis()
             && incoming().premiumExpiresAt <= (request.time.toMillis() + 604920000)
             && !exists(/databases/$(database)/documents/banned_devices/$(incoming().lastDeviceFingerprint))
@@ -472,7 +528,7 @@ service cloud.firestore {
             && incoming().diff(existing()).affectedKeys().hasOnly(['subscriptionStatus', 'updatedAt'])
           )
         );
-      allow delete: if isAdmin() && isValidId(userId);
+      allow delete: if false;
 
       match /private/{infoId} {
         allow get: if isValidId(userId) && isValidId(infoId) && (isOwner(userId) || isAdmin());

@@ -79,6 +79,7 @@ export const FOOTER_COLUMNS: FooterColumn[] = [
 
 export const FOOTER_QUICK_CATEGORIES: { label: string; categoryId: CategoryId }[] = [
   { label: 'Tous les outils', categoryId: 'all' },
+  { label: 'Studio Image & OCR', categoryId: 'studio_image' },
   { label: 'Flux de travail', categoryId: 'workflow' },
   { label: 'Organiser PDF', categoryId: 'organiser' },
   { label: 'Optimiser le PDF', categoryId: 'optimiser' },

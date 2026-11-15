@@ -332,7 +332,10 @@ export function PricingView({
                       {req.planLabel} · {req.formattedAmount}
                     </p>
                     <p className="text-[11px] font-mono text-neutral-500 truncate">
-                      Réf : {req.reference} · {req.transferDate}
+                      {req.reference
+                        ? `Réf : ${req.reference}`
+                        : `Justificatif : ${req.receiptFileName || 'Pièce bancaire jointe'}`}{' '}
+                      · {req.transferDate}
                     </p>
                   </div>
                   <span

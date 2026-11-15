@@ -4,6 +4,7 @@ import {
   ClipboardList,
   Combine,
   Crop,
+  Eraser,
   EyeOff,
   FileCode,
   FileMinus,
@@ -23,12 +24,14 @@ import {
   Presentation,
   RotateCw,
   ScanLine,
+  ScanSearch,
   ScanText,
   Scissors,
   Share2,
   Sheet,
   ShieldAlert,
   Signature,
+  SlidersHorizontal,
   Sparkles,
   Stamp,
   Table,
@@ -79,6 +82,9 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   languages: Languages,
   sparkles: Sparkles,
   workflow: Workflow,
+  eraser: Eraser,
+  'sliders-horizontal': SlidersHorizontal,
+  'scan-search': ScanSearch,
 };
 
 export function ToolIcon({ name, className = 'w-5 h-5' }: ToolIconProps) {

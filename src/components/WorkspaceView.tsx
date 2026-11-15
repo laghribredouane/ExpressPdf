@@ -18,6 +18,7 @@ import {
   FileDiff,
   FilePlus,
   FileSpreadsheet,
+  FileText,
   GripVertical,
   ImagePlus,
   LayoutGrid,
@@ -76,6 +77,7 @@ interface WorkspaceViewProps {
     sizeFormatted: string;
   }) => void;
   onImportFromGmail?: () => void;
+  onImportFromGoogleDocs?: () => void;
   onSendResultViaGmail?: (payload: {
     fileName: string;
     blob: Blob;
@@ -233,6 +235,7 @@ export function WorkspaceView({
   onNotify,
   onFileProcessed,
   onImportFromGmail,
+  onImportFromGoogleDocs,
   onSendResultViaGmail,
   onScheduleResultInCalendar,
   isPremiumOrTrial = false,
@@ -1946,16 +1949,31 @@ export function WorkspaceView({
                   </>
                 )}
               </div>
-              {onImportFromGmail && tool.accept.includes('.pdf') && (
-                <button
-                  type="button"
-                  onClick={onImportFromGmail}
-                  className="mt-4 px-4 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/70 hover:border-brand-red text-xs font-bold text-neutral-700 dark:text-neutral-200 inline-flex items-center gap-2 transition-colors"
-                >
-                  <Mail className="w-3.5 h-3.5 text-brand-red" />
-                  <span>Importer une pièce jointe PDF depuis Gmail</span>
-                </button>
-              )}
+              {(onImportFromGmail || onImportFromGoogleDocs) &&
+                tool.accept.includes('.pdf') && (
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                    {onImportFromGmail && (
+                      <button
+                        type="button"
+                        onClick={onImportFromGmail}
+                        className="px-4 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/70 hover:border-brand-red text-xs font-bold text-neutral-700 dark:text-neutral-200 inline-flex items-center gap-2 transition-colors"
+                      >
+                        <Mail className="w-3.5 h-3.5 text-brand-red" />
+                        <span>Importer depuis Gmail</span>
+                      </button>
+                    )}
+                    {onImportFromGoogleDocs && (
+                      <button
+                        type="button"
+                        onClick={onImportFromGoogleDocs}
+                        className="px-4 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800/70 hover:border-indigo-500 text-xs font-bold text-neutral-700 dark:text-neutral-200 inline-flex items-center gap-2 transition-colors"
+                      >
+                        <FileText className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                        <span>Importer un Google Doc (PDF)</span>
+                      </button>
+                    )}
+                  </div>
+                )}
             </div>
 
             {tool.id === 'html2pdf' && (

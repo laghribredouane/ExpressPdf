@@ -9,6 +9,7 @@ import {
   Edit3,
   ExternalLink,
   FileDown,
+  FilePlus,
   FileText,
   Inbox,
   Loader2,
@@ -16,7 +17,9 @@ import {
   MapPin,
   Paperclip,
   PenSquare,
+  Plus,
   RefreshCw,
+  Save,
   Search,
   Send,
   Trash2,
@@ -26,17 +29,26 @@ import {
 import { clearWorkspaceAccessToken } from '../firebase';
 import {
   WorkspaceAuthError,
+  appendTextToGoogleDoc,
   createCalendarEvent,
   createGmailDraft,
+  createGoogleDoc,
   deleteCalendarEvent,
   downloadGmailAttachment,
+  exportGoogleDocAsPdf,
+  getGoogleDoc,
   listCalendarEvents,
   listCalendars,
   listGmailMessages,
+  listGoogleDocs,
+  replaceGoogleDocText,
   sendGmailMessage,
+  trashGoogleDoc,
   updateCalendarEvent,
   type GoogleCalendarEvent,
   type GoogleCalendarSummary,
+  type GoogleDocDetail,
+  type GoogleDocSummary,
   type GmailAttachmentMeta,
   type GmailMessageSummary,
 } from '../services/googleWorkspace';
@@ -48,12 +60,19 @@ export type WorkspaceModalMode =
   | 'hub'
   | 'gmail_import'
   | 'gmail_send'
-  | 'calendar_schedule';
+  | 'calendar_schedule'
+  | 'docs_browse'
+  | 'docs_export';
 
 interface AttachmentContext {
   fileName: string;
   blob: Blob;
   toolTitle?: string;
+}
+
+interface TextExportContext {
+  title: string;
+  content: string;
 }
 
 interface WorkspaceIntegrationsModalProps {
@@ -66,6 +85,7 @@ interface WorkspaceIntegrationsModalProps {
   onClose: () => void;
   onNotify: (msg: string, type?: 'info' | 'success' | 'error') => void;
   attachmentContext?: AttachmentContext | null;
+  textExportContext?: TextExportContext | null;
   onImportPdfToTool?: (file: File, targetToolId?: ToolId) => void;
 }
 
@@ -124,6 +144,40 @@ type PendingConfirmation =
       subject: string;
       body: string;
       includeAttachment: boolean;
+    }
+  | {
+      kind: 'docs_create';
+      title: string;
+      description: string;
+      details: string[];
+      docTitle: string;
+      docContent: string;
+    }
+  | {
+      kind: 'docs_replace';
+      title: string;
+      description: string;
+      details: string[];
+      documentId: string;
+      docTitle: string;
+      newContent: string;
+    }
+  | {
+      kind: 'docs_append';
+      title: string;
+      description: string;
+      details: string[];
+      documentId: string;
+      docTitle: string;
+      appendText: string;
+    }
+  | {
+      kind: 'docs_trash';
+      title: string;
+      description: string;
+      details: string[];
+      documentId: string;
+      docTitle: string;
     };
 
 function toLocalDateTimeInput(iso?: string): string {
@@ -183,11 +237,31 @@ export function WorkspaceIntegrationsModal({
   onClose,
   onNotify,
   attachmentContext,
+  textExportContext,
   onImportPdfToTool,
 }: WorkspaceIntegrationsModalProps) {
-  const [activeTab, setActiveTab] = useState<'calendar' | 'gmail'>(
-    initialMode === 'calendar_schedule' ? 'calendar' : 'gmail'
+  const [activeTab, setActiveTab] = useState<'docs' | 'calendar' | 'gmail'>(
+    initialMode === 'calendar_schedule'
+      ? 'calendar'
+      : initialMode === 'docs_browse' || initialMode === 'docs_export'
+      ? 'docs'
+      : 'gmail'
   );
+
+  // Google Docs state
+  const [docsSubView, setDocsSubView] = useState<'list' | 'create'>(
+    initialMode === 'docs_export' ? 'create' : 'list'
+  );
+  const [docsQuery, setDocsQuery] = useState('');
+  const [docsList, setDocsList] = useState<GoogleDocSummary[]>([]);
+  const [isLoadingDocs, setIsLoadingDocs] = useState(false);
+  const [selectedDoc, setSelectedDoc] = useState<GoogleDocDetail | null>(null);
+  const [isLoadingDocDetail, setIsLoadingDocDetail] = useState(false);
+  const [docEditorText, setDocEditorText] = useState('');
+  const [docAppendText, setDocAppendText] = useState('');
+  const [exportingDocId, setExportingDocId] = useState<string | null>(null);
+  const [newDocTitle, setNewDocTitle] = useState('');
+  const [newDocContent, setNewDocContent] = useState('');
 
   // Calendar state
   const [calendars, setCalendars] = useState<GoogleCalendarSummary[]>([]);
@@ -276,12 +350,24 @@ export function WorkspaceIntegrationsModal({
       setActiveTab('gmail');
       setGmailSubView('inbox');
       setGmailOnlyPdf(true);
+    } else if (initialMode === 'docs_browse') {
+      setActiveTab('docs');
+      setDocsSubView('list');
+    } else if (initialMode === 'docs_export') {
+      setActiveTab('docs');
+      setDocsSubView('create');
+      setNewDocTitle(
+        textExportContext?.title ||
+          `Document PDFExpress - ${new Date().toLocaleDateString('fr-FR')}`
+      );
+      setNewDocContent(textExportContext?.content || '');
     } else {
-      setActiveTab('calendar');
+      setActiveTab('docs');
+      setDocsSubView('list');
       setCalendarFormOpen(false);
       setGmailSubView('inbox');
     }
-  }, [isOpen, initialMode, attachmentContext]);
+  }, [isOpen, initialMode, attachmentContext, textExportContext]);
 
   const handleApiError = useCallback(
     (err: unknown) => {
@@ -295,6 +381,19 @@ export function WorkspaceIntegrationsModal({
     },
     [onNotify]
   );
+
+  const fetchDocsData = useCallback(async () => {
+    if (!workspaceToken) return;
+    setIsLoadingDocs(true);
+    try {
+      const files = await listGoogleDocs(workspaceToken, docsQuery, 20);
+      setDocsList(files);
+    } catch (err) {
+      handleApiError(err);
+    } finally {
+      setIsLoadingDocs(false);
+    }
+  }, [workspaceToken, docsQuery, handleApiError]);
 
   const fetchCalendarData = useCallback(async () => {
     if (!workspaceToken) return;
@@ -338,7 +437,11 @@ export function WorkspaceIntegrationsModal({
 
   useEffect(() => {
     if (!isOpen || !workspaceToken) return;
-    if (activeTab === 'calendar') {
+    if (activeTab === 'docs') {
+      if (docsSubView === 'list') {
+        void fetchDocsData();
+      }
+    } else if (activeTab === 'calendar') {
       void fetchCalendarData();
     } else if (gmailSubView === 'inbox') {
       void fetchGmailData();
@@ -347,7 +450,9 @@ export function WorkspaceIntegrationsModal({
     isOpen,
     workspaceToken,
     activeTab,
+    docsSubView,
     gmailSubView,
+    fetchDocsData,
     fetchCalendarData,
     fetchGmailData,
   ]);
@@ -584,6 +689,65 @@ export function WorkspaceIntegrationsModal({
         });
         onNotify('Brouillon sauvegardé dans Gmail.', 'success');
         setGmailSubView('inbox');
+      } else if (pendingConfirm.kind === 'docs_create') {
+        const created = await createGoogleDoc(
+          workspaceToken,
+          pendingConfirm.docTitle,
+          pendingConfirm.docContent
+        );
+        onNotify(`Google Doc "${created.title}" créé avec succès.`, 'success');
+        setDocsSubView('list');
+        setNewDocTitle('');
+        setNewDocContent('');
+        await fetchDocsData();
+        const detail = await getGoogleDoc(workspaceToken, created.documentId);
+        setSelectedDoc(detail);
+        setDocEditorText(detail.plainText);
+        setDocAppendText('');
+      } else if (pendingConfirm.kind === 'docs_replace') {
+        await replaceGoogleDocText(
+          workspaceToken,
+          pendingConfirm.documentId,
+          pendingConfirm.newContent
+        );
+        onNotify(
+          `Contenu du document "${pendingConfirm.docTitle}" mis à jour.`,
+          'success'
+        );
+        const refreshed = await getGoogleDoc(
+          workspaceToken,
+          pendingConfirm.documentId
+        );
+        setSelectedDoc(refreshed);
+        setDocEditorText(refreshed.plainText);
+      } else if (pendingConfirm.kind === 'docs_append') {
+        await appendTextToGoogleDoc(
+          workspaceToken,
+          pendingConfirm.documentId,
+          pendingConfirm.appendText
+        );
+        onNotify(
+          `Texte ajouté à la fin de "${pendingConfirm.docTitle}".`,
+          'success'
+        );
+        setDocAppendText('');
+        const refreshed = await getGoogleDoc(
+          workspaceToken,
+          pendingConfirm.documentId
+        );
+        setSelectedDoc(refreshed);
+        setDocEditorText(refreshed.plainText);
+      } else if (pendingConfirm.kind === 'docs_trash') {
+        await trashGoogleDoc(workspaceToken, pendingConfirm.documentId);
+        onNotify(
+          `Document "${pendingConfirm.docTitle}" déplacé dans la corbeille Google Drive.`,
+          'info'
+        );
+        if (selectedDoc?.documentId === pendingConfirm.documentId) {
+          setSelectedDoc(null);
+          setDocEditorText('');
+        }
+        await fetchDocsData();
       }
       setPendingConfirm(null);
     } catch (err) {
@@ -591,6 +755,119 @@ export function WorkspaceIntegrationsModal({
     } finally {
       setIsExecutingAction(false);
     }
+  };
+
+  const handleOpenGoogleDoc = async (docSummary: GoogleDocSummary) => {
+    if (!workspaceToken) return;
+    setIsLoadingDocDetail(true);
+    try {
+      const detail = await getGoogleDoc(workspaceToken, docSummary.id);
+      setSelectedDoc(detail);
+      setDocEditorText(detail.plainText);
+      setDocAppendText('');
+    } catch (err) {
+      handleApiError(err);
+    } finally {
+      setIsLoadingDocDetail(false);
+    }
+  };
+
+  const handleImportGoogleDocAsPdf = async (
+    documentId: string,
+    title: string
+  ) => {
+    if (!workspaceToken || !onImportPdfToTool) return;
+    setExportingDocId(documentId);
+    try {
+      const pdfFile = await exportGoogleDocAsPdf(
+        workspaceToken,
+        documentId,
+        title
+      );
+      onNotify(`Google Doc "${title}" exporté en PDF.`, 'success');
+      onImportPdfToTool(
+        pdfFile,
+        initialMode === 'docs_browse' ? undefined : selectedTargetTool
+      );
+      onClose();
+    } catch (err) {
+      handleApiError(err);
+    } finally {
+      setExportingDocId(null);
+    }
+  };
+
+  const handleRequestCreateDoc = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newDocTitle.trim()) {
+      onNotify('Veuillez saisir un titre pour le Google Doc.', 'error');
+      return;
+    }
+    setPendingConfirm({
+      kind: 'docs_create',
+      title: 'Créer un nouveau Google Doc ?',
+      description:
+        'Un nouveau document sera créé dans votre espace Google Docs / Drive.',
+      details: [
+        `Titre : ${newDocTitle.trim()}`,
+        newDocContent.trim()
+          ? `Longueur du texte initial : ${newDocContent.trim().length} caractères`
+          : 'Document vierge',
+      ],
+      docTitle: newDocTitle.trim(),
+      docContent: newDocContent,
+    });
+  };
+
+  const handleRequestSaveDocEdit = () => {
+    if (!selectedDoc) return;
+    setPendingConfirm({
+      kind: 'docs_replace',
+      title: 'Enregistrer les modifications dans Google Docs ?',
+      description:
+        'Le texte actuel de ce Google Doc sera remplacé par le contenu édité ci-dessous.',
+      details: [
+        `Document : ${selectedDoc.title}`,
+        `Nouvelle longueur : ${docEditorText.length} caractères`,
+      ],
+      documentId: selectedDoc.documentId,
+      docTitle: selectedDoc.title,
+      newContent: docEditorText,
+    });
+  };
+
+  const handleRequestAppendDoc = () => {
+    if (!selectedDoc || !docAppendText.trim()) {
+      onNotify('Veuillez saisir un paragraphe à ajouter.', 'error');
+      return;
+    }
+    setPendingConfirm({
+      kind: 'docs_append',
+      title: 'Ajouter ce texte à la fin du Google Doc ?',
+      description:
+        'Le paragraphe saisi sera inséré à la fin du document sans effacer le contenu existant.',
+      details: [
+        `Document : ${selectedDoc.title}`,
+        `Ajout : "${docAppendText.trim().slice(0, 120)}${
+          docAppendText.trim().length > 120 ? '...' : ''
+        }"`,
+      ],
+      documentId: selectedDoc.documentId,
+      docTitle: selectedDoc.title,
+      appendText: docAppendText.trim(),
+    });
+  };
+
+  const handleRequestTrashDoc = (documentId: string, title: string) => {
+    setPendingConfirm({
+      kind: 'docs_trash',
+      title: 'Déplacer ce Google Doc vers la corbeille ?',
+      description:
+        'Le document sera placé dans la corbeille de votre Google Drive.',
+      details: [`Document : ${title}`],
+      documentId,
+      docTitle: title,
+    });
   };
 
   const handleImportAttachment = async (
@@ -709,14 +986,16 @@ export function WorkspaceIntegrationsModal({
       className="fixed inset-0 z-[85] flex items-center justify-center p-2 sm:p-6 bg-black/60 backdrop-blur-xs"
       role="dialog"
       aria-modal="true"
-      aria-label="Google Calendar et Gmail"
+      aria-label="Google Workspace : Docs, Calendar et Gmail"
     >
       <div className="relative w-[95vw] sm:w-full max-w-5xl max-h-[90dvh] bg-white dark:bg-brand-cardDark rounded-3xl shadow-2xl border border-neutral-200 dark:border-brand-borderDark flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="px-5 sm:px-6 py-4 border-b border-neutral-200 dark:border-brand-borderDark flex items-center justify-between gap-3 bg-neutral-50/70 dark:bg-neutral-900/50">
+        <div className="px-5 sm:px-6 py-4 border-b border-neutral-200 dark:border-brand-borderDark flex flex-wrap items-center justify-between gap-3 bg-neutral-50/70 dark:bg-neutral-900/50">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
-              {activeTab === 'calendar' ? (
+              {activeTab === 'docs' ? (
+                <FileText className="w-5 h-5" />
+              ) : activeTab === 'calendar' ? (
                 <Calendar className="w-5 h-5" />
               ) : (
                 <Mail className="w-5 h-5" />
@@ -724,12 +1003,12 @@ export function WorkspaceIntegrationsModal({
             </div>
             <div className="min-w-0">
               <h2 className="text-base sm:text-lg font-extrabold text-neutral-900 dark:text-white truncate">
-                Google Calendar &amp; Gmail
+                Google Docs, Calendar &amp; Gmail
               </h2>
               <p className="text-xs text-neutral-500 dark:text-neutral-400 truncate">
                 {workspaceToken
                   ? `Session connectée${userEmail ? ` · ${userEmail}` : ''}`
-                  : 'Connectez votre compte Google pour synchroniser agenda et e-mails'}
+                  : 'Connectez votre compte Google pour accéder à Docs, Agenda et Gmail'}
               </p>
             </div>
           </div>
@@ -737,6 +1016,18 @@ export function WorkspaceIntegrationsModal({
           <div className="flex items-center gap-2 shrink-0">
             {/* Switcher tabs */}
             <div className="inline-flex p-1 rounded-xl bg-neutral-200/70 dark:bg-neutral-800">
+              <button
+                type="button"
+                onClick={() => setActiveTab('docs')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
+                  activeTab === 'docs'
+                    ? 'bg-white dark:bg-neutral-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                    : 'text-neutral-600 dark:text-neutral-300 hover:text-neutral-900'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>Docs</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setActiveTab('calendar')}
@@ -779,6 +1070,9 @@ export function WorkspaceIntegrationsModal({
           {!workspaceToken ? (
             <div className="max-w-lg mx-auto my-8 p-7 rounded-2xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/70 dark:bg-neutral-900/50 text-center space-y-5">
               <div className="flex items-center justify-center gap-3">
+                <span className="w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                  <FileText className="w-6 h-6" />
+                </span>
                 <span className="w-12 h-12 rounded-2xl bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
                   <Calendar className="w-6 h-6" />
                 </span>
@@ -788,10 +1082,10 @@ export function WorkspaceIntegrationsModal({
               </div>
               <div>
                 <h3 className="text-lg font-extrabold text-neutral-900 dark:text-white mb-2">
-                  Autorisez l’accès à Google Calendar et Gmail
+                  Autorisez l’accès à Google Docs, Calendar &amp; Gmail
                 </h3>
                 <p className="text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed">
-                  Consultez vos événements, planifiez des échéances de signature PDF, importez des pièces jointes Gmail dans vos outils et envoyez vos PDF traités par e-mail.
+                  Consultez, créez et éditez vos Google Docs, importez un Doc en PDF dans PDFExpress, synchronisez vos échéances Calendar et gérez vos pièces jointes Gmail.
                 </p>
               </div>
               <div className="flex justify-center">
@@ -805,6 +1099,385 @@ export function WorkspaceIntegrationsModal({
                   }
                 />
               </div>
+            </div>
+          ) : activeTab === 'docs' ? (
+            <div className="space-y-5">
+              {/* Google Docs Toolbar */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="inline-flex p-1 rounded-xl bg-neutral-100 dark:bg-neutral-800">
+                  <button
+                    type="button"
+                    onClick={() => setDocsSubView('list')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 ${
+                      docsSubView === 'list'
+                        ? 'bg-white dark:bg-neutral-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                        : 'text-neutral-500'
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>Mes Google Docs</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDocsSubView('create')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold inline-flex items-center gap-1.5 ${
+                      docsSubView === 'create'
+                        ? 'bg-white dark:bg-neutral-900 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                        : 'text-neutral-500'
+                    }`}
+                  >
+                    <FilePlus className="w-3.5 h-3.5" />
+                    <span>Nouveau Google Doc</span>
+                  </button>
+                </div>
+
+                {docsSubView === 'list' && (
+                  <div className="flex flex-wrap items-center gap-2 flex-grow justify-end">
+                    <div className="relative flex-grow max-w-xs">
+                      <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={docsQuery}
+                        onChange={(e) => setDocsQuery(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') void fetchDocsData();
+                        }}
+                        placeholder="Rechercher un Google Doc..."
+                        className="w-full pl-8 pr-3 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs outline-none focus:border-indigo-500"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void fetchDocsData()}
+                      disabled={isLoadingDocs}
+                      className="px-3 py-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-xs font-bold inline-flex items-center gap-1.5"
+                    >
+                      <RefreshCw
+                        className={`w-3.5 h-3.5 ${
+                          isLoadingDocs ? 'animate-spin' : ''
+                        }`}
+                      />
+                      <span>Actualiser</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {docsSubView === 'list' ? (
+                <div className="space-y-4">
+                  {onImportPdfToTool && (
+                    <div className="p-3 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-900/50 flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs text-neutral-700 dark:text-neutral-300 font-medium">
+                        Transformez n’importe quel Google Doc en PDF prêt pour vos outils :
+                      </p>
+                      {initialMode !== 'docs_browse' && (
+                        <select
+                          value={selectedTargetTool}
+                          onChange={(e) =>
+                            setSelectedTargetTool(e.target.value as ToolId)
+                          }
+                          className="px-3 py-1.5 rounded-lg border border-indigo-200 dark:border-neutral-700 bg-white dark:bg-neutral-800 text-xs font-bold"
+                        >
+                          <option value="compress">Compresser PDF</option>
+                          <option value="sign">Signer PDF</option>
+                          <option value="editpdf">Modifier PDF</option>
+                          <option value="watermark">Filigrane PDF</option>
+                          <option value="protect">Protéger PDF</option>
+                          <option value="aisummary">Résumé par IA</option>
+                          <option value="translatepdf">Traduire le PDF</option>
+                        </select>
+                      )}
+                    </div>
+                  )}
+
+                  <div
+                    className={`grid gap-5 ${
+                      selectedDoc || isLoadingDocDetail
+                        ? 'lg:grid-cols-12'
+                        : 'grid-cols-1'
+                    }`}
+                  >
+                    {/* Docs List */}
+                    <div
+                      className={`${
+                        selectedDoc || isLoadingDocDetail ? 'lg:col-span-5' : ''
+                      } space-y-2.5`}
+                    >
+                      {isLoadingDocs && docsList.length === 0 ? (
+                        <div className="py-14 flex flex-col items-center justify-center text-neutral-400 gap-2">
+                          <Loader2 className="w-7 h-7 animate-spin text-indigo-600" />
+                          <p className="text-xs font-semibold">
+                            Chargement de vos Google Docs...
+                          </p>
+                        </div>
+                      ) : docsList.length === 0 ? (
+                        <div className="py-12 text-center rounded-2xl border border-dashed border-neutral-300 dark:border-neutral-700">
+                          <FileText className="w-9 h-9 text-neutral-300 dark:text-neutral-600 mx-auto mb-2" />
+                          <p className="text-sm font-bold text-neutral-700 dark:text-neutral-300">
+                            Aucun Google Doc trouvé
+                          </p>
+                          <p className="text-xs text-neutral-400 mt-1">
+                            Créez un document avec « Nouveau Google Doc » ou modifiez votre recherche.
+                          </p>
+                        </div>
+                      ) : (
+                        docsList.map((docItem) => {
+                          const isSelected = selectedDoc?.documentId === docItem.id;
+                          const isExporting = exportingDocId === docItem.id;
+
+                          return (
+                            <div
+                              key={docItem.id}
+                              className={`p-4 rounded-2xl border transition-colors space-y-3 ${
+                                isSelected
+                                  ? 'border-indigo-500 bg-indigo-50/40 dark:bg-indigo-950/20'
+                                  : 'border-neutral-200 dark:border-neutral-700/80 bg-neutral-50/50 dark:bg-neutral-900/40 hover:border-indigo-400/70'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <h4 className="text-sm font-extrabold text-neutral-900 dark:text-white truncate">
+                                    {docItem.name}
+                                  </h4>
+                                  {docItem.modifiedTime && (
+                                    <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">
+                                      Modifié le{' '}
+                                      {new Date(docItem.modifiedTime).toLocaleDateString(
+                                        'fr-FR',
+                                        {
+                                          day: '2-digit',
+                                          month: 'short',
+                                          year: 'numeric',
+                                        }
+                                      )}
+                                    </p>
+                                  )}
+                                </div>
+
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {docItem.webViewLink && (
+                                    <a
+                                      href={docItem.webViewLink}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      title="Ouvrir dans Google Docs"
+                                      className="p-2 rounded-lg hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-500"
+                                    >
+                                      <ExternalLink className="w-3.5 h-3.5" />
+                                    </a>
+                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleRequestTrashDoc(docItem.id, docItem.name)
+                                    }
+                                    title="Mettre à la corbeille"
+                                    className="p-2 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 text-brand-red"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void handleOpenGoogleDoc(docItem)}
+                                  className="px-3 py-1.5 rounded-xl bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 hover:border-indigo-500 text-xs font-bold text-neutral-700 dark:text-neutral-200 inline-flex items-center gap-1.5"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                                  <span>Lire / Modifier</span>
+                                </button>
+
+                                {onImportPdfToTool && (
+                                  <button
+                                    type="button"
+                                    disabled={isExporting}
+                                    onClick={() =>
+                                      void handleImportGoogleDocAsPdf(
+                                        docItem.id,
+                                        docItem.name
+                                      )
+                                    }
+                                    className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold inline-flex items-center gap-1.5 disabled:opacity-50"
+                                  >
+                                    {isExporting ? (
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <FileDown className="w-3.5 h-3.5" />
+                                    )}
+                                    <span>Importer en PDF</span>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Selected Doc Reader & Editor */}
+                    {(selectedDoc || isLoadingDocDetail) && (
+                      <div className="lg:col-span-7 p-4 sm:p-5 rounded-2xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/30 dark:bg-indigo-950/15 space-y-4 h-fit">
+                        {isLoadingDocDetail || !selectedDoc ? (
+                          <div className="py-16 flex flex-col items-center justify-center gap-2 text-neutral-400">
+                            <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+                            <p className="text-xs font-semibold">
+                              Chargement du document...
+                            </p>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <h3 className="text-sm sm:text-base font-extrabold text-neutral-900 dark:text-white truncate">
+                                  {selectedDoc.title}
+                                </h3>
+                                <p className="text-[11px] text-neutral-500 dark:text-neutral-400 tabular-nums">
+                                  {docEditorText.trim()
+                                    ? `${docEditorText.trim().split(/\s+/).length} mot(s)`
+                                    : 'Document vide'}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <a
+                                  href={selectedDoc.webViewLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-3 py-1.5 rounded-xl bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-xs font-bold text-neutral-700 dark:text-neutral-200 inline-flex items-center gap-1.5"
+                                >
+                                  <ExternalLink className="w-3.5 h-3.5" />
+                                  <span>Google Docs</span>
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedDoc(null)}
+                                  className="p-1.5 rounded-lg hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-500"
+                                  aria-label="Fermer l'aperçu"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-bold uppercase text-neutral-500 mb-1">
+                                Contenu du document
+                              </label>
+                              <textarea
+                                rows={9}
+                                value={docEditorText}
+                                onChange={(e) => setDocEditorText(e.target.value)}
+                                placeholder="Saisissez ou modifiez le texte du document..."
+                                className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-xs sm:text-sm leading-relaxed outline-none focus:border-indigo-500"
+                              />
+                              <div className="flex flex-wrap items-center justify-between gap-2 mt-2.5">
+                                {onImportPdfToTool && (
+                                  <button
+                                    type="button"
+                                    disabled={exportingDocId === selectedDoc.documentId}
+                                    onClick={() =>
+                                      void handleImportGoogleDocAsPdf(
+                                        selectedDoc.documentId,
+                                        selectedDoc.title
+                                      )
+                                    }
+                                    className="px-3.5 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-neutral-800 text-indigo-700 dark:text-indigo-300 text-xs font-bold inline-flex items-center gap-1.5"
+                                  >
+                                    <FileDown className="w-3.5 h-3.5" />
+                                    <span>Convertir &amp; Ouvrir en PDF</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={handleRequestSaveDocEdit}
+                                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold inline-flex items-center gap-1.5 shadow-sm ml-auto"
+                                >
+                                  <Save className="w-3.5 h-3.5" />
+                                  <span>Enregistrer les modifications</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="pt-3 border-t border-indigo-200/70 dark:border-indigo-900/50 space-y-2">
+                              <label className="block text-[11px] font-bold uppercase text-neutral-500">
+                                Ajouter un paragraphe à la fin
+                              </label>
+                              <div className="flex flex-col sm:flex-row gap-2">
+                                <input
+                                  type="text"
+                                  value={docAppendText}
+                                  onChange={(e) => setDocAppendText(e.target.value)}
+                                  placeholder="Note ou texte à ajouter en bas du doc..."
+                                  className="flex-grow px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-xs outline-none focus:border-indigo-500"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={handleRequestAppendDoc}
+                                  className="px-3.5 py-2 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 text-xs font-bold inline-flex items-center justify-center gap-1.5 shrink-0"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>Ajouter</span>
+                                </button>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* CREATE GOOGLE DOC FORM */
+                <form
+                  onSubmit={handleRequestCreateDoc}
+                  className="max-w-2xl mx-auto p-5 rounded-2xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50/60 dark:bg-neutral-900/40 space-y-4"
+                >
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase text-neutral-500 mb-1">
+                      Titre du document Google Docs *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newDocTitle}
+                      onChange={(e) => setNewDocTitle(e.target.value)}
+                      placeholder="Ex: Compte-rendu client PDFExpress"
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-sm outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase text-neutral-500 mb-1">
+                      Contenu initial
+                    </label>
+                    <textarea
+                      rows={9}
+                      value={newDocContent}
+                      onChange={(e) => setNewDocContent(e.target.value)}
+                      placeholder="Saisissez le texte à insérer dans votre nouveau Google Doc..."
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-sm outline-none focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-end gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setDocsSubView('list')}
+                      className="px-4 py-2.5 rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-xs font-bold text-neutral-700 dark:text-neutral-200"
+                    >
+                      Retour à la liste
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold inline-flex items-center gap-2 shadow-sm"
+                    >
+                      <FilePlus className="w-4 h-4" />
+                      <span>Créer dans Google Docs</span>
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           ) : activeTab === 'calendar' ? (
             <div className="space-y-5">
@@ -1394,7 +2067,8 @@ export function WorkspaceIntegrationsModal({
               <div className="flex items-start gap-3">
                 <div
                   className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-                    pendingConfirm.kind === 'calendar_delete'
+                    pendingConfirm.kind === 'calendar_delete' ||
+                    pendingConfirm.kind === 'docs_trash'
                       ? 'bg-red-100 dark:bg-red-950/60 text-brand-red'
                       : 'bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400'
                   }`}
@@ -1436,7 +2110,8 @@ export function WorkspaceIntegrationsModal({
                   disabled={isExecutingAction}
                   onClick={() => void executeConfirmedAction()}
                   className={`px-4 py-2 rounded-xl text-xs font-extrabold text-white inline-flex items-center gap-1.5 ${
-                    pendingConfirm.kind === 'calendar_delete'
+                    pendingConfirm.kind === 'calendar_delete' ||
+                    pendingConfirm.kind === 'docs_trash'
                       ? 'bg-brand-red hover:bg-brand-redHover'
                       : 'bg-blue-600 hover:bg-blue-700'
                   } disabled:opacity-50`}
