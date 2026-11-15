@@ -8,18 +8,26 @@ import {
   Copy,
   Download,
   FileText,
+  Film,
   Layers,
+  Pause,
+  Play,
   Plus,
   Share2,
   Sparkles,
   Trash2,
 } from 'lucide-react';
+import {
+  PDFEXPRESS_FIVE_POSTS,
+  type SocialCampaignPreset,
+} from '../data/socialCampaigns';
 import type {
   LoadedFile,
   SocialPlatformId,
   SocialSlide,
   SocialThemeId,
 } from '../types/pdf';
+import { encodeAnimatedGif } from '../utils/animatedGif';
 import { extractFullTextFromPdfJs, formatBytes } from '../utils/pdfEngine';
 
 interface SocialPostStudioProps {
@@ -409,8 +417,149 @@ function renderSlideToCanvas(
   ctx.font = `600 ${isWide ? 18 : 22}px Inter, system-ui, sans-serif`;
   ctx.fillStyle = theme.bodyColor;
   ctx.textAlign = 'right';
-  ctx.fillText(authorHandle || '@pdfexpress', w - padX - 24, fMidY);
+  ctx.fillText(authorHandle || 'pdfexpress.ai.studio', w - padX - 24, fMidY);
   ctx.textAlign = 'left';
+}
+
+type AnimationStyle = 'carousel_slide' | 'kinetic_pulse' | 'editorial_reveal';
+
+const SLIDE_DURATION_MS = 2200;
+
+function easeOutCubic(t: number): number {
+  const clamped = Math.max(0, Math.min(1, t));
+  return 1 - Math.pow(1 - clamped, 3);
+}
+
+function renderAnimatedCompositeFrame(
+  targetCanvas: HTMLCanvasElement,
+  slidesList: SocialSlide[],
+  elapsedMs: number,
+  platform: PlatformPreset,
+  theme: ThemeStyle,
+  authorName: string,
+  authorHandle: string,
+  animStyle: AnimationStyle,
+  singleSlideIndex?: number
+) {
+  const safeList = slidesList.length > 0 ? slidesList : [];
+  if (safeList.length === 0) return;
+
+  const w = platform.w;
+  const h = platform.h;
+  if (targetCanvas.width !== w) targetCanvas.width = w;
+  if (targetCanvas.height !== h) targetCanvas.height = h;
+  const ctx = targetCanvas.getContext('2d');
+  if (!ctx) return;
+
+  const totalCycleMs =
+    typeof singleSlideIndex === 'number'
+      ? SLIDE_DURATION_MS
+      : safeList.length * SLIDE_DURATION_MS;
+  const cycleMs = ((elapsedMs % totalCycleMs) + totalCycleMs) % totalCycleMs;
+
+  const activeIdx =
+    typeof singleSlideIndex === 'number'
+      ? Math.min(singleSlideIndex, safeList.length - 1)
+      : Math.floor(cycleMs / SLIDE_DURATION_MS) % safeList.length;
+  const localMs =
+    typeof singleSlideIndex === 'number'
+      ? cycleMs
+      : cycleMs - activeIdx * SLIDE_DURATION_MS;
+  const localProgress = Math.max(0, Math.min(1, localMs / SLIDE_DURATION_MS));
+
+  // Offscreen static render for current slide
+  const slideCanvasA = document.createElement('canvas');
+  renderSlideToCanvas(
+    slideCanvasA,
+    safeList[activeIdx],
+    activeIdx,
+    safeList.length,
+    platform,
+    theme,
+    authorName,
+    authorHandle
+  );
+
+  ctx.clearRect(0, 0, w, h);
+
+  const transitionWindow = 0.18;
+  if (
+    animStyle === 'carousel_slide' &&
+    safeList.length > 1 &&
+    localProgress < transitionWindow
+  ) {
+    const prevIdx = (activeIdx - 1 + safeList.length) % safeList.length;
+    const slideCanvasPrev = document.createElement('canvas');
+    renderSlideToCanvas(
+      slideCanvasPrev,
+      safeList[prevIdx],
+      prevIdx,
+      safeList.length,
+      platform,
+      theme,
+      authorName,
+      authorHandle
+    );
+    const t = easeOutCubic(localProgress / transitionWindow);
+    const offset = Math.round((1 - t) * w);
+    ctx.save();
+    ctx.globalAlpha = 1 - t * 0.35;
+    ctx.drawImage(slideCanvasPrev, offset - w, 0, w, h);
+    ctx.restore();
+    ctx.save();
+    ctx.globalAlpha = t;
+    ctx.drawImage(slideCanvasA, offset, 0, w, h);
+    ctx.restore();
+  } else if (animStyle === 'kinetic_pulse') {
+    const pulse = 1 + 0.025 * Math.sin(localProgress * Math.PI * 2);
+    const dw = w * pulse;
+    const dh = h * pulse;
+    ctx.drawImage(slideCanvasA, (w - dw) / 2, (h - dh) / 2, dw, dh);
+
+    // Sweeping light sheen
+    const sheenX = -w * 0.3 + localProgress * w * 1.6;
+    const sheenGrad = ctx.createLinearGradient(sheenX, 0, sheenX + w * 0.28, h);
+    sheenGrad.addColorStop(0, 'rgba(255,255,255,0)');
+    sheenGrad.addColorStop(0.5, 'rgba(255,255,255,0.12)');
+    sheenGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = sheenGrad;
+    ctx.fillRect(0, 0, w, h);
+  } else if (animStyle === 'editorial_reveal') {
+    const revealT = easeOutCubic(Math.min(1, localProgress / 0.35));
+    const slideOffsetY = Math.round((1 - revealT) * 28);
+    ctx.fillStyle = theme.bgStart;
+    ctx.fillRect(0, 0, w, h);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.15, revealT);
+    ctx.drawImage(slideCanvasA, 0, slideOffsetY, w, h);
+    ctx.restore();
+  } else {
+    const settleZoom = 1 + 0.012 * Math.sin(localProgress * Math.PI);
+    const dw = w * settleZoom;
+    const dh = h * settleZoom;
+    ctx.drawImage(slideCanvasA, (w - dw) / 2, (h - dh) / 2, dw, dh);
+  }
+
+  // Animated top timeline progress bar across slides
+  const barH = w > h ? 8 : 10;
+  ctx.fillStyle = 'rgba(0,0,0,0.16)';
+  ctx.fillRect(0, h - barH, w, barH);
+  const overallProgress =
+    typeof singleSlideIndex === 'number'
+      ? localProgress
+      : (activeIdx + localProgress) / safeList.length;
+  ctx.fillStyle = theme.accent;
+  ctx.fillRect(0, h - barH, Math.round(w * overallProgress), barH);
+}
+
+function createSlidesFromPreset(preset: SocialCampaignPreset): SocialSlide[] {
+  return preset.slides.map((s) => ({
+    id: crypto.randomUUID(),
+    badge: s.badge,
+    title: s.title,
+    body: s.body,
+    cta: s.cta,
+  }));
 }
 
 export function SocialPostStudio({
@@ -418,47 +567,31 @@ export function SocialPostStudio({
   onNotify,
   onExportRecorded,
 }: SocialPostStudioProps) {
-  const [platformId, setPlatformId] =
-    useState<SocialPlatformId>('linkedin_carousel');
-  const [themeId, setThemeId] = useState<SocialThemeId>('brand_red');
-  const [topic, setTopic] = useState(
-    '5 astuces pour optimiser, signer et sécuriser vos PDF en 2 minutes'
+  const initialCampaign = PDFEXPRESS_FIVE_POSTS[0];
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string>(
+    initialCampaign.id
   );
-  const [tone, setTone] = useState('Professionnel');
+  const [platformId, setPlatformId] = useState<SocialPlatformId>(
+    initialCampaign.platformId
+  );
+  const [themeId, setThemeId] = useState<SocialThemeId>(initialCampaign.themeId);
+  const [topic, setTopic] = useState(initialCampaign.topic);
+  const [tone, setTone] = useState(initialCampaign.tone);
   const [authorName, setAuthorName] = useState('PDFExpress');
-  const [authorHandle, setAuthorHandle] = useState('@pdfexpress');
-  const [slides, setSlides] = useState<SocialSlide[]>([
-    {
-      id: crypto.randomUUID(),
-      badge: 'GUIDE PRATIQUE',
-      title: 'Maîtrisez vos PDF sans effort',
-      body: 'Découvrez comment compresser, fusionner, signer et convertir vos documents directement depuis votre navigateur.',
-      cta: 'Faites défiler →',
-    },
-    {
-      id: crypto.randomUUID(),
-      badge: 'ASTUCE 01',
-      title: 'Compressez sans perdre en netteté',
-      body: 'Réduisez jusqu’à 70% le poids de vos rapports avant envoi par e-mail ou archivage.',
-      cta: 'Slide 02 / 03',
-    },
-    {
-      id: crypto.randomUUID(),
-      badge: 'À RETENIR',
-      title: 'Partagez et signez en 1 clic',
-      body: 'Mémorisez votre signature électronique et automatisez vos flux documentaires.',
-      cta: 'Enregistrez ce post',
-    },
-  ]);
+  const [authorHandle, setAuthorHandle] = useState('pdfexpress.ai.studio');
+  const [slides, setSlides] = useState<SocialSlide[]>(() =>
+    createSlidesFromPreset(initialCampaign)
+  );
   const [activeSlideIndex, setActiveSlideIndex] = useState(0);
-  const [caption, setCaption] = useState(
-    '🚀 Vos documents PDF vous font perdre du temps ?\n\nVoici 3 réflexes simples pour gagner en efficacité au quotidien sans installer de logiciel lourd.\n\n👉 Enregistrez ce carrousel pour votre prochaine présentation !'
-  );
-  const [hashtagsText, setHashtagsText] = useState(
-    '#Productivité #PDFExpress #OutilsPro #Workflow #Digital'
-  );
+  const [caption, setCaption] = useState(initialCampaign.adCopy);
+  const [hashtagsText, setHashtagsText] = useState(initialCampaign.hashtags);
+  const [animStyle, setAnimStyle] = useState<AnimationStyle>('carousel_slide');
+  const [isPlayingAnimation, setIsPlayingAnimation] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [exportStatusLabel, setExportStatusLabel] = useState<string | null>(
+    null
+  );
   const [copiedCaption, setCopiedCaption] = useState(false);
 
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -469,6 +602,26 @@ export function SocialPostStudio({
   const theme = THEMES[themeId];
   const safeSlideIndex = Math.min(activeSlideIndex, Math.max(0, slides.length - 1));
   const currentSlide = slides[safeSlideIndex] || slides[0];
+
+  const applyCampaignPreset = useCallback(
+    (preset: SocialCampaignPreset) => {
+      setSelectedCampaignId(preset.id);
+      setPlatformId(preset.platformId);
+      setThemeId(preset.themeId);
+      setTopic(preset.topic);
+      setTone(preset.tone);
+      setSlides(createSlidesFromPreset(preset));
+      setActiveSlideIndex(0);
+      setCaption(preset.adCopy);
+      setHashtagsText(preset.hashtags);
+      setIsPlayingAnimation(true);
+      onNotify(
+        `${preset.number} (${preset.networkLabel}) chargé avec Ad Copy et visuel animé.`,
+        'success'
+      );
+    },
+    [onNotify]
+  );
 
   const handleGeneratePost = useCallback(
     async (customTopic?: string, customTone?: string) => {
@@ -557,23 +710,51 @@ export function SocialPostStudio({
     void handleGeneratePost(`Les points clés du document : ${cleanName}`, tone);
   }, [loadedFile, handleGeneratePost, tone]);
 
-  // Redraw preview canvas on every edit
+  // Animate or draw static preview canvas
   useEffect(() => {
-    if (!previewCanvasRef.current || !currentSlide) return;
-    renderSlideToCanvas(
-      previewCanvasRef.current,
-      currentSlide,
-      safeSlideIndex,
-      slides.length,
-      platform,
-      theme,
-      authorName,
-      authorHandle
-    );
+    const canvas = previewCanvasRef.current;
+    if (!canvas || !currentSlide) return;
+
+    if (!isPlayingAnimation) {
+      renderSlideToCanvas(
+        canvas,
+        currentSlide,
+        safeSlideIndex,
+        slides.length,
+        platform,
+        theme,
+        authorName,
+        authorHandle
+      );
+      return;
+    }
+
+    let rafId = 0;
+    const startTime = performance.now() - safeSlideIndex * SLIDE_DURATION_MS;
+
+    const tick = (now: number) => {
+      const elapsed = now - startTime;
+      renderAnimatedCompositeFrame(
+        canvas,
+        slides,
+        elapsed,
+        platform,
+        theme,
+        authorName,
+        authorHandle,
+        animStyle
+      );
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(rafId);
   }, [
+    isPlayingAnimation,
+    animStyle,
     currentSlide,
     safeSlideIndex,
-    slides.length,
+    slides,
     platform,
     theme,
     authorName,
@@ -638,29 +819,270 @@ export function SocialPostStudio({
     }
   };
 
+  const buildAnimatedGifBlob = async (
+    targetSlides: SocialSlide[],
+    targetPlatform: PlatformPreset,
+    targetTheme: ThemeStyle,
+    targetAnimStyle: AnimationStyle
+  ): Promise<Blob> => {
+    const maxDim = 540;
+    const scale = Math.min(1, maxDim / Math.max(targetPlatform.w, targetPlatform.h));
+    const gifW = Math.max(240, Math.round(targetPlatform.w * scale));
+    const gifH = Math.max(240, Math.round(targetPlatform.h * scale));
+
+    const hdCanvas = document.createElement('canvas');
+    const gifCanvas = document.createElement('canvas');
+    gifCanvas.width = gifW;
+    gifCanvas.height = gifH;
+    const gifCtx = gifCanvas.getContext('2d', { willReadFrequently: true });
+    if (!gifCtx) {
+      throw new Error('Contexte Canvas indisponible pour l’encodage GIF.');
+    }
+
+    const fps = 10;
+    const delayMs = Math.round(1000 / fps);
+    const totalMs = Math.max(1, targetSlides.length) * SLIDE_DURATION_MS;
+    const frameCount = Math.max(12, Math.round((totalMs / 1000) * fps));
+    const frames: Array<{ rgba: Uint8ClampedArray; delayMs: number }> = [];
+
+    for (let i = 0; i < frameCount; i++) {
+      const elapsed = i * delayMs;
+      renderAnimatedCompositeFrame(
+        hdCanvas,
+        targetSlides,
+        elapsed,
+        targetPlatform,
+        targetTheme,
+        authorName,
+        authorHandle,
+        targetAnimStyle
+      );
+      gifCtx.clearRect(0, 0, gifW, gifH);
+      gifCtx.drawImage(hdCanvas, 0, 0, gifW, gifH);
+      const imageData = gifCtx.getImageData(0, 0, gifW, gifH);
+      frames.push({
+        rgba: imageData.data,
+        delayMs,
+      });
+      if (i % 8 === 0) {
+        await new Promise((r) => setTimeout(r, 0));
+      }
+    }
+
+    return encodeAnimatedGif(gifW, gifH, frames);
+  };
+
+  const handleDownloadAnimatedGif = async () => {
+    setIsExporting(true);
+    setExportStatusLabel('Encodage de l’image animée (.GIF)...');
+    try {
+      const gifBlob = await buildAnimatedGifBlob(
+        slides,
+        platform,
+        theme,
+        animStyle
+      );
+      const fileName = `post_anime_${platform.id}.gif`;
+      triggerDownload(gifBlob, fileName);
+      onNotify(
+        `Image animée GIF téléchargée (${formatBytes(gifBlob.size)}).`,
+        'success'
+      );
+    } catch (err) {
+      onNotify(
+        err instanceof Error ? err.message : 'Erreur export GIF animé.',
+        'error'
+      );
+    } finally {
+      setIsExporting(false);
+      setExportStatusLabel(null);
+    }
+  };
+
+  const handleDownloadAnimatedWebm = async () => {
+    if (
+      typeof MediaRecorder === 'undefined' ||
+      typeof HTMLCanvasElement.prototype.captureStream !== 'function'
+    ) {
+      onNotify(
+        'Export vidéo WebM non supporté par ce navigateur — utilisez l’export GIF animé.',
+        'error'
+      );
+      return;
+    }
+
+    setIsExporting(true);
+    setExportStatusLabel('Enregistrement vidéo animée (.WEBM)...');
+    try {
+      const recCanvas = document.createElement('canvas');
+      recCanvas.width = platform.w;
+      recCanvas.height = platform.h;
+      const stream = recCanvas.captureStream(30);
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
+        ? 'video/webm;codecs=vp9'
+        : 'video/webm';
+      const recorder = new MediaRecorder(stream, {
+        mimeType,
+        videoBitsPerSecond: 3_500_000,
+      });
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      const donePromise = new Promise<Blob>((resolve) => {
+        recorder.onstop = () => {
+          resolve(new Blob(chunks, { type: mimeType }));
+        };
+      });
+
+      const totalMs = Math.max(1, slides.length) * SLIDE_DURATION_MS;
+      const start = performance.now();
+      recorder.start();
+
+      await new Promise<void>((resolve) => {
+        const step = (now: number) => {
+          const elapsed = now - start;
+          renderAnimatedCompositeFrame(
+            recCanvas,
+            slides,
+            elapsed,
+            platform,
+            theme,
+            authorName,
+            authorHandle,
+            animStyle
+          );
+          if (elapsed < totalMs) {
+            window.requestAnimationFrame(step);
+          } else {
+            resolve();
+          }
+        };
+        window.requestAnimationFrame(step);
+      });
+
+      recorder.stop();
+      const webmBlob = await donePromise;
+      const fileName = `video_sociale_${platform.id}.webm`;
+      triggerDownload(webmBlob, fileName);
+      onNotify(
+        `Vidéo animée téléchargée (${formatBytes(webmBlob.size)}).`,
+        'success'
+      );
+    } catch (err) {
+      onNotify(
+        err instanceof Error
+          ? err.message
+          : 'Erreur lors de l’export vidéo WebM.',
+        'error'
+      );
+    } finally {
+      setIsExporting(false);
+      setExportStatusLabel(null);
+    }
+  };
+
+  const handleDownloadAllFivePostsPack = async () => {
+    setIsExporting(true);
+    try {
+      const zip = new JSZip();
+      const allCopyLines: string[] = [];
+
+      for (let idx = 0; idx < PDFEXPRESS_FIVE_POSTS.length; idx++) {
+        const preset = PDFEXPRESS_FIVE_POSTS[idx];
+        setExportStatusLabel(
+          `Génération ${preset.number}/05 (${preset.networkLabel})...`
+        );
+        const presetPlatform =
+          PLATFORMS.find((p) => p.id === preset.platformId) || PLATFORMS[0];
+        const presetTheme = THEMES[preset.themeId] || THEMES.brand_red;
+        const presetSlides = createSlidesFromPreset(preset);
+
+        const gifBlob = await buildAnimatedGifBlob(
+          presetSlides,
+          presetPlatform,
+          presetTheme,
+          'carousel_slide'
+        );
+
+        const folderName = `${String(idx + 1).padStart(2, '0')}_${preset.networkLabel
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')}`;
+        zip.file(`${folderName}/visuel_anime.gif`, gifBlob);
+
+        const copyContent = [
+          `=== ${preset.number} · ${preset.networkLabel} (${presetPlatform.ratioLabel}) ===`,
+          `Objectif : ${preset.objective}`,
+          `Titre : ${preset.campaignTitle}`,
+          '',
+          '--- AD COPY ---',
+          preset.adCopy,
+          '',
+          preset.hashtags,
+        ].join('\n');
+
+        zip.file(`${folderName}/adcopy.txt`, copyContent);
+        allCopyLines.push(copyContent, '\n' + '='.repeat(50) + '\n');
+      }
+
+      zip.file('TOUS_LES_5_POSTS_ADCOPY.txt', allCopyLines.join('\n'));
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const fileName = 'pack_5_posts_pdfexpress_animes.zip';
+      triggerDownload(zipBlob, fileName);
+      onNotify(
+        'Pack complet des 5 posts (5 images animées GIF + Ad Copy) téléchargé !',
+        'success'
+      );
+    } catch (err) {
+      onNotify(
+        err instanceof Error
+          ? err.message
+          : 'Erreur lors de la création du pack des 5 posts.',
+        'error'
+      );
+    } finally {
+      setIsExporting(false);
+      setExportStatusLabel(null);
+    }
+  };
+
   const handleDownloadAllZip = async () => {
     setIsExporting(true);
+    setExportStatusLabel('Création de l’archive ZIP...');
     try {
       const zip = new JSZip();
       for (let i = 0; i < slides.length; i++) {
         const blob = await renderSlideBlob(i);
         zip.file(`slide_${String(i + 1).padStart(2, '0')}.png`, blob);
       }
+      const gifBlob = await buildAnimatedGifBlob(
+        slides,
+        platform,
+        theme,
+        animStyle
+      );
+      zip.file(`visuel_anime_${platform.id}.gif`, gifBlob);
       const fullPostText = `${caption}\n\n${hashtagsText}`.trim();
       zip.file('texte_du_post.txt', fullPostText);
       const zipBlob = await zip.generateAsync({ type: 'blob' });
       const fileName = `pack_social_${platform.id}.zip`;
       triggerDownload(zipBlob, fileName);
-      onNotify(`Pack de ${slides.length} visuels + texte téléchargé.`, 'success');
+      onNotify(
+        `Pack de ${slides.length} PNG + GIF animé + Ad Copy téléchargé.`,
+        'success'
+      );
     } catch {
       onNotify('Erreur lors de la création de l’archive ZIP.', 'error');
     } finally {
       setIsExporting(false);
+      setExportStatusLabel(null);
     }
   };
 
   const handleDownloadCarouselPdf = async () => {
     setIsExporting(true);
+    setExportStatusLabel('Génération du carrousel PDF...');
     try {
       const pdfDoc = await PDFDocument.create();
       pdfDoc.setTitle(`Carrousel Social - ${platform.network}`);
@@ -693,6 +1115,7 @@ export function SocialPostStudio({
       onNotify('Erreur lors de la création du carrousel PDF.', 'error');
     } finally {
       setIsExporting(false);
+      setExportStatusLabel(null);
     }
   };
 
@@ -746,9 +1169,68 @@ export function SocialPostStudio({
 
   return (
     <div className="flex-grow flex flex-col lg:flex-row overflow-hidden">
-      {/* Colonne Gauche : Générateur & Aperçu Visuel HD */}
+      {/* Colonne Gauche : 5 Campagnes prêtes, Générateur & Aperçu Animé */}
       <div className="flex-grow p-4 sm:p-6 lg:p-8 overflow-y-auto bg-brand-bgLight dark:bg-brand-bgDark space-y-6">
         <div className="max-w-5xl mx-auto space-y-5">
+          {/* 5 Posts officiels prêts à publier pour PDFExpress */}
+          <div className="bg-white dark:bg-brand-cardDark rounded-2xl p-4 sm:p-5 border border-neutral-200 dark:border-brand-borderDark space-y-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="font-display text-sm sm:text-base font-bold text-neutral-900 dark:text-white">
+                  5 Campagnes PDFExpress prêtes à publier (Ad Copy + Image animée)
+                </h2>
+                <p className="text-xs text-neutral-500 dark:text-neutral-400">
+                  Sélectionnez l’un des 5 posts pour prévisualiser son animation et copier son texte, ou exportez le pack complet.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={isExporting}
+                onClick={() => void handleDownloadAllFivePostsPack()}
+                className="min-h-[38px] px-3.5 py-2 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 hover:bg-brand-red dark:hover:bg-brand-red dark:hover:text-white text-xs font-bold inline-flex items-center gap-1.5 transition-colors disabled:opacity-50 whitespace-nowrap cursor-pointer"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Télécharger les 5 posts (GIF + Ad Copy .ZIP)</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+              {PDFEXPRESS_FIVE_POSTS.map((preset) => {
+                const isSelected = selectedCampaignId === preset.id;
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => applyCampaignPreset(preset)}
+                    className={`p-3 rounded-xl border text-left transition-colors cursor-pointer flex flex-col justify-between gap-1.5 ${
+                      isSelected
+                        ? 'border-brand-red bg-red-50/60 dark:bg-red-950/30'
+                        : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-600'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 text-[11px] font-mono">
+                      <span
+                        className={`font-bold ${
+                          isSelected
+                            ? 'text-brand-red'
+                            : 'text-neutral-500 dark:text-neutral-400'
+                        }`}
+                      >
+                        {preset.number}
+                      </span>
+                      <span className="text-neutral-500 dark:text-neutral-400 truncate">
+                        {preset.networkLabel}
+                      </span>
+                    </div>
+                    <p className="text-xs font-bold text-neutral-900 dark:text-white leading-snug line-clamp-2">
+                      {preset.campaignTitle}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Barre de génération IA / Sujet */}
           <div className="bg-white dark:bg-brand-cardDark rounded-2xl p-4 sm:p-5 border border-neutral-200 dark:border-brand-borderDark space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -811,38 +1293,72 @@ export function SocialPostStudio({
             </div>
           </div>
 
-          {/* Barre navigation des slides + Aperçu Canvas */}
+          {/* Barre navigation des slides + Contrôle d'animation + Aperçu Canvas */}
           <div className="bg-white dark:bg-brand-cardDark rounded-3xl p-4 sm:p-6 border border-neutral-200 dark:border-brand-borderDark">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  disabled={safeSlideIndex === 0}
-                  onClick={() =>
-                    setActiveSlideIndex((i) => Math.max(0, i - 1))
-                  }
-                  aria-label="Slide précédente"
-                  className="p-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-35"
+                  onClick={() => setIsPlayingAnimation((p) => !p)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                    isPlayingAnimation
+                      ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-800 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700'
+                  }`}
                 >
-                  <ChevronLeft className="w-4 h-4" />
+                  {isPlayingAnimation ? (
+                    <Pause className="w-3.5 h-3.5" />
+                  ) : (
+                    <Play className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {isPlayingAnimation ? 'Animation active' : 'Lire l’animation'}
+                  </span>
                 </button>
-                <span className="text-xs sm:text-sm font-extrabold px-2 tabular-nums">
-                  Slide {safeSlideIndex + 1} / {slides.length}
-                </span>
-                <button
-                  type="button"
-                  disabled={safeSlideIndex >= slides.length - 1}
-                  onClick={() =>
-                    setActiveSlideIndex((i) =>
-                      Math.min(slides.length - 1, i + 1)
-                    )
-                  }
-                  aria-label="Slide suivante"
-                  className="p-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-35"
+
+                <select
+                  value={animStyle}
+                  onChange={(e) => setAnimStyle(e.target.value as AnimationStyle)}
+                  aria-label="Style d'animation"
+                  className="px-2.5 py-1.5 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-900 text-xs font-semibold"
                 >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-                <span className="hidden sm:inline-block text-[11px] font-semibold text-neutral-400 ml-2">
+                  <option value="carousel_slide">Glissement carrousel</option>
+                  <option value="kinetic_pulse">Zoom &amp; reflet lumineux</option>
+                  <option value="editorial_reveal">Révélation éditoriale</option>
+                </select>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={safeSlideIndex === 0}
+                    onClick={() => {
+                      setIsPlayingAnimation(false);
+                      setActiveSlideIndex((i) => Math.max(0, i - 1));
+                    }}
+                    aria-label="Slide précédente"
+                    className="p-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-35"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  <span className="text-xs sm:text-sm font-extrabold px-1.5 tabular-nums">
+                    Slide {safeSlideIndex + 1} / {slides.length}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={safeSlideIndex >= slides.length - 1}
+                    onClick={() => {
+                      setIsPlayingAnimation(false);
+                      setActiveSlideIndex((i) =>
+                        Math.min(slides.length - 1, i + 1)
+                      );
+                    }}
+                    aria-label="Slide suivante"
+                    className="p-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-35"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+                <span className="hidden sm:inline-block text-[11px] font-semibold text-neutral-400">
                   {platform.ratioLabel}
                 </span>
               </div>
@@ -1064,15 +1580,22 @@ export function SocialPostStudio({
 
         {/* Boutons d'export & partage */}
         <div className="p-5 border-t border-neutral-200 dark:border-brand-borderDark bg-neutral-50 dark:bg-neutral-900/50 space-y-2.5">
+          {exportStatusLabel && (
+            <p className="text-[11px] font-mono font-semibold text-brand-red text-center">
+              {exportStatusLabel}
+            </p>
+          )}
+
           <button
             type="button"
             disabled={isExporting}
-            onClick={() => void handleDownloadCarouselPdf()}
-            className="w-full py-3 px-4 rounded-xl bg-brand-red hover:bg-brand-redHover text-white font-bold text-sm inline-flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-md shadow-red-500/20"
+            onClick={() => void handleDownloadAnimatedGif()}
+            className="w-full py-3 px-4 rounded-xl bg-brand-red hover:bg-brand-redHover text-white font-bold text-sm inline-flex items-center justify-center gap-2 transition-colors disabled:opacity-50 shadow-md shadow-red-500/20 cursor-pointer"
           >
-            <FileText className="w-4 h-4" />
+            <Film className="w-4 h-4" />
             <span>
-              Exporter en Carrousel PDF ({slides.length} page{slides.length > 1 ? 's' : ''})
+              Exporter Image animée (.GIF — {slides.length} slide
+              {slides.length > 1 ? 's' : ''})
             </span>
           </button>
 
@@ -1080,34 +1603,53 @@ export function SocialPostStudio({
             <button
               type="button"
               disabled={isExporting}
+              onClick={() => void handleDownloadAnimatedWebm()}
+              className="py-2.5 px-3 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-opacity hover:opacity-90 disabled:opacity-50 cursor-pointer"
+            >
+              <Film className="w-3.5 h-3.5" />
+              <span>Vidéo .WEBM</span>
+            </button>
+            <button
+              type="button"
+              disabled={isExporting}
+              onClick={() => void handleDownloadCarouselPdf()}
+              className="py-2.5 px-3 rounded-xl bg-pink-600 hover:bg-pink-700 text-white font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Carrousel PDF</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              disabled={isExporting}
               onClick={() => void handleDownloadCurrentPng()}
-              className="py-2.5 px-3 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="py-2 px-3 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:border-brand-red text-neutral-700 dark:text-neutral-200 font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Image PNG</span>
+              <span>Slide PNG</span>
             </button>
             <button
               type="button"
               disabled={isExporting}
               onClick={() => void handleNativeShare()}
-              className="py-2.5 px-3 rounded-xl bg-pink-600 hover:bg-pink-700 text-white font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
+              className="py-2 px-3 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:border-brand-red text-neutral-700 dark:text-neutral-200 font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
             >
               <Share2 className="w-3.5 h-3.5" />
               <span>Partager</span>
             </button>
           </div>
 
-          {slides.length > 1 && (
-            <button
-              type="button"
-              disabled={isExporting}
-              onClick={() => void handleDownloadAllZip()}
-              className="w-full py-2 px-3 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:border-brand-red text-neutral-700 dark:text-neutral-200 font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50"
-            >
-              <Layers className="w-3.5 h-3.5" />
-              <span>Tout télécharger (Images + Texte .ZIP)</span>
-            </button>
-          )}
+          <button
+            type="button"
+            disabled={isExporting}
+            onClick={() => void handleDownloadAllZip()}
+            className="w-full py-2 px-3 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:border-brand-red text-neutral-700 dark:text-neutral-200 font-bold text-xs inline-flex items-center justify-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Tout télécharger (GIF + PNG + Ad Copy .ZIP)</span>
+          </button>
         </div>
       </aside>
     </div>

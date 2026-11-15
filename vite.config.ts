@@ -169,7 +169,9 @@ export default defineConfig(() => {
             {
               urlPattern: ({ url }) =>
                 url.origin === self.location.origin &&
-                /^\/ads\.txt$/i.test(url.pathname),
+                (/^\/(?:ads\.txt|sw\.js|registerSW\.js|manifest\.json)$/i.test(
+                  url.pathname
+                )),
               handler: 'NetworkOnly',
             },
             {
@@ -264,9 +266,10 @@ export default defineConfig(() => {
                 (request.destination === 'script' ||
                   request.destination === 'style' ||
                   request.destination === 'worker'),
-              handler: 'StaleWhileRevalidate',
+              handler: 'NetworkFirst',
               options: {
                 cacheName: 'app-runtime-assets',
+                networkTimeoutSeconds: 4,
                 expiration: {
                   maxEntries: 60,
                   maxAgeSeconds: 60 * 60 * 24 * 30,

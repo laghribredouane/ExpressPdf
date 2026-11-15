@@ -103,9 +103,9 @@ export const PREMIUM_PLANS: PremiumPlanDefinition[] = [
       'Priorité de traitement et export haute résolution',
     ],
     prices: {
-      MAD: { monthly: 79, annual: 690 },
-      USD: { monthly: 7.9, annual: 69 },
-      EUR: { monthly: 6.99, annual: 59 },
+      MAD: { monthly: 39, annual: 345 },
+      USD: { monthly: 3.95, annual: 34 },
+      EUR: { monthly: 3.49, annual: 29 },
     },
   },
   {
@@ -119,9 +119,9 @@ export const PREMIUM_PLANS: PremiumPlanDefinition[] = [
       'Support prioritaire dédié par e-mail',
     ],
     prices: {
-      MAD: { monthly: 199, annual: 1790 },
-      USD: { monthly: 19.9, annual: 179 },
-      EUR: { monthly: 17.99, annual: 159 },
+      MAD: { monthly: 99, annual: 895 },
+      USD: { monthly: 9.95, annual: 89 },
+      EUR: { monthly: 8.99, annual: 79 },
     },
   },
 ];
