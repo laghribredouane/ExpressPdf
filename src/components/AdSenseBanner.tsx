@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Crown, Megaphone } from 'lucide-react';
 import {
   type AdSensePlacement,
@@ -22,6 +22,9 @@ export function AdSenseBanner({
 }: AdSenseBannerProps) {
   const insRef = useRef<HTMLModElement | null>(null);
   const pushedSlotRef = useRef<string | null>(null);
+  const [adStatus, setAdStatus] = useState<'pending' | 'filled' | 'unfilled'>(
+    'pending'
+  );
 
   const clientId = getAdSenseClientId();
   const slotId = getAdSenseSlotId(placement);
@@ -32,26 +35,45 @@ export function AdSenseBanner({
       return;
     }
 
-    let cancelled = false;
-    void ensureAdSenseScriptLoaded(clientId).then(() => {
-      if (cancelled || pushedSlotRef.current === slotId || !insRef.current) {
-        return;
+    setAdStatus('pending');
+    void ensureAdSenseScriptLoaded(clientId);
+
+    const insEl = insRef.current;
+    if (!insEl) return;
+
+    const syncStatusFromDom = () => {
+      const attr = insEl.getAttribute('data-ad-status');
+      if (attr === 'unfilled') {
+        setAdStatus('unfilled');
+      } else if (attr === 'filled') {
+        setAdStatus('filled');
       }
-      if (insRef.current.getAttribute('data-adsbygoogle-status')) {
-        pushedSlotRef.current = slotId;
-        return;
-      }
+    };
+
+    const observer = new MutationObserver(syncStatusFromDom);
+    observer.observe(insEl, {
+      attributes: true,
+      attributeFilter: ['data-ad-status', 'data-adsbygoogle-status'],
+    });
+
+    if (
+      pushedSlotRef.current !== slotId &&
+      !insEl.getAttribute('data-adsbygoogle-status')
+    ) {
       try {
         window.adsbygoogle = window.adsbygoogle || [];
+        window.adsbygoogle.pauseAdRequests = 0;
         window.adsbygoogle.push({});
         pushedSlotRef.current = slotId;
       } catch {
         // Ignore blocked or duplicate AdSense push errors cleanly
       }
-    });
+    }
+
+    syncStatusFromDom();
 
     return () => {
-      cancelled = true;
+      observer.disconnect();
     };
   }, [isAdFree, clientId, slotId]);
 
@@ -63,7 +85,10 @@ export function AdSenseBanner({
     <aside
       aria-label="Publicité Google AdSense"
       data-adsense-placement={placement}
-      className={`w-full rounded-2xl border border-neutral-200/90 dark:border-brand-borderDark bg-white/95 dark:bg-brand-cardDark/95 p-3 sm:p-4 shadow-xs ${className}`}
+      data-ad-render-status={adStatus}
+      className={`w-full rounded-2xl border border-neutral-200/90 dark:border-brand-borderDark bg-white/95 dark:bg-brand-cardDark/95 p-3 sm:p-4 shadow-xs ${
+        adStatus === 'unfilled' ? 'hidden' : ''
+      } ${className}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
         <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-neutral-500 dark:text-neutral-400">

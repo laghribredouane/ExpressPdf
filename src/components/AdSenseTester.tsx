@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   CheckCircle2,
   Eye,
   PauseCircle,
@@ -20,14 +21,25 @@ interface AdSenseTesterProps {
   isAdFree: boolean;
 }
 
+interface DomSlotEntry {
+  slot: string;
+  adsbygoogleStatus: string;
+  adStatus: string;
+  dimensions: string;
+}
+
 interface TesterState {
   pauseAdRequests: number | undefined;
   adFreeStorage: string | null;
   scriptPresent: boolean;
   scriptLoaded: boolean;
+  scriptErrored: boolean;
   adsByGoogleLoaded: boolean;
+  runtimeHooked: boolean;
   clientId: string;
+  hostname: string;
   slots: Record<AdSensePlacement, string>;
+  domSlots: DomSlotEntry[];
 }
 
 function readTesterState(): TesterState {
@@ -37,13 +49,17 @@ function readTesterState(): TesterState {
       adFreeStorage: null,
       scriptPresent: false,
       scriptLoaded: false,
+      scriptErrored: false,
       adsByGoogleLoaded: false,
+      runtimeHooked: false,
       clientId: getAdSenseClientId(),
+      hostname: '',
       slots: {
         home: getAdSenseSlotId('home'),
         workspace: getAdSenseSlotId('workspace'),
         result: getAdSenseSlotId('result'),
       },
+      domSlots: [],
     };
   }
 
@@ -58,19 +74,42 @@ function readTesterState(): TesterState {
     'script[src*="pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]'
   );
 
+  const runtimeHooked = Boolean(
+    window.adsbygoogle && window.adsbygoogle.push !== Array.prototype.push
+  );
+
+  const domSlots = Array.from(
+    document.querySelectorAll<HTMLElement>('ins.adsbygoogle')
+  ).map((el) => {
+    const rect = el.getBoundingClientRect();
+    return {
+      slot: el.getAttribute('data-ad-slot') || 'auto',
+      adsbygoogleStatus:
+        el.getAttribute('data-adsbygoogle-status') || 'non initialisé',
+      adStatus: el.getAttribute('data-ad-status') || 'en attente',
+      dimensions: `${Math.round(rect.width)}×${Math.round(rect.height)}px`,
+    };
+  });
+
   return {
     pauseAdRequests: window.adsbygoogle?.pauseAdRequests,
     adFreeStorage,
     scriptPresent: Boolean(scriptEl),
     scriptLoaded:
-      scriptEl?.dataset.loaded === 'true' || Boolean(window.adsbygoogle?.loaded),
-    adsByGoogleLoaded: Boolean(window.adsbygoogle?.loaded),
+      scriptEl?.dataset.loaded === 'true' ||
+      Boolean(window.adsbygoogle?.loaded) ||
+      runtimeHooked,
+    scriptErrored: scriptEl?.dataset.errored === 'true',
+    adsByGoogleLoaded: Boolean(window.adsbygoogle?.loaded) || runtimeHooked,
+    runtimeHooked,
     clientId: getAdSenseClientId(),
+    hostname: window.location.hostname,
     slots: {
       home: getAdSenseSlotId('home'),
       workspace: getAdSenseSlotId('workspace'),
       result: getAdSenseSlotId('result'),
     },
+    domSlots,
   };
 }
 
@@ -126,6 +165,10 @@ export function AdSenseTester({
 
   const isPaused = state.pauseAdRequests === 1;
   const activeSlotValue = state.slots[previewPlacement] || '(vide — Auto Ads)';
+  const hasUnfilledSlot = state.domSlots.some((s) => s.adStatus === 'unfilled');
+  const isPreviewHost =
+    state.hostname !== 'pdfexpress.ai.studio' &&
+    state.hostname !== 'www.pdfexpress.ai.studio';
 
   return (
     <div
@@ -205,7 +248,9 @@ export function AdSenseTester({
                 Script adsbygoogle.js
               </span>
               <p className="font-mono text-xs font-bold text-neutral-900 dark:text-white pt-0.5">
-                {state.scriptPresent
+                {state.scriptErrored
+                  ? 'Bloqué / Erreur réseau (bloqueur de pub ?)'
+                  : state.scriptPresent
                   ? state.scriptLoaded || state.adsByGoogleLoaded
                     ? 'Présent & chargé'
                     : 'Présent (chargement)'
@@ -213,6 +258,59 @@ export function AdSenseTester({
               </p>
             </div>
           </div>
+
+          {/* Live DOM <ins> Diagnostic */}
+          {(state.domSlots.length > 0 || state.scriptErrored || isPreviewHost || hasUnfilledSlot) && (
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-2.5 text-xs">
+              <div className="flex items-center gap-2 font-bold text-neutral-900 dark:text-white">
+                <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span>Diagnostic de remplissage en direct ({state.hostname})</span>
+              </div>
+
+              {state.scriptErrored && (
+                <p className="text-red-700 dark:text-red-400">
+                  Le script adsbygoogle.js a été bloqué par le navigateur ou une extension (AdBlock / Brave / DNS).
+                </p>
+              )}
+
+              {isPreviewHost && (
+                <p className="text-neutral-600 dark:text-neutral-300">
+                  Vous consultez actuellement <span className="font-mono">{state.hostname}</span> : Google AdSense ne remplit généralement pas les annonces hors du domaine approuvé <span className="font-mono">pdfexpress.ai.studio</span>.
+                </p>
+              )}
+
+              {hasUnfilledSlot && (
+                <p className="text-amber-800 dark:text-amber-300">
+                  Google AdSense a répondu <span className="font-mono font-bold">data-ad-status=&quot;unfilled&quot;</span> (aucune annonce servie tant que le domaine / ads.txt est en cours d&apos;examen dans AdSense).
+                </p>
+              )}
+
+              {state.domSlots.length > 0 && (
+                <div className="overflow-x-auto pt-1">
+                  <table className="w-full text-left font-mono text-[11px] tabular-nums">
+                    <thead className="text-neutral-500 dark:text-neutral-400 border-b border-neutral-200 dark:border-neutral-800">
+                      <tr>
+                        <th className="py-1.5 pr-3">Slot</th>
+                        <th className="py-1.5 pr-3">adsbygoogle-status</th>
+                        <th className="py-1.5 pr-3">ad-status</th>
+                        <th className="py-1.5 text-right">Taille</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                      {state.domSlots.map((item, i) => (
+                        <tr key={`${item.slot}-${i}`}>
+                          <td className="py-1.5 pr-3">{item.slot}</td>
+                          <td className="py-1.5 pr-3">{item.adsbygoogleStatus}</td>
+                          <td className="py-1.5 pr-3">{item.adStatus}</td>
+                          <td className="py-1.5 text-right">{item.dimensions}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Empty Slot CSS Spacing Simulator */}
           <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 p-4 space-y-4">
@@ -244,14 +342,14 @@ export function AdSenseTester({
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-1 p-1 rounded-lg bg-neutral-100 dark:bg-neutral-800">
+              <div className="flex items-center gap-1 p-1 rounded-lg bg-neutral-100 dark:bg-neutral-800 overflow-x-auto max-w-full">
                 {(['home', 'workspace', 'result'] as AdSensePlacement[]).map(
                   (placement) => (
                     <button
                       key={placement}
                       type="button"
                       onClick={() => setPreviewPlacement(placement)}
-                      className={`px-3 py-1.5 rounded-md font-bold transition-colors whitespace-nowrap cursor-pointer ${
+                      className={`px-3 py-1.5 rounded-md font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                         previewPlacement === placement
                           ? 'bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white shadow-xs'
                           : 'text-neutral-600 dark:text-neutral-400'

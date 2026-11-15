@@ -104,7 +104,10 @@ export function ensureAdSenseScriptLoaded(
     }
 
     inFlightScriptPromise = new Promise<void>((resolve) => {
+      let settled = false;
       const done = (loaded: boolean) => {
+        if (settled) return;
+        settled = true;
         if (loaded) {
           existing.dataset.loaded = 'true';
         } else {
@@ -116,9 +119,8 @@ export function ensureAdSenseScriptLoaded(
       existing.addEventListener('load', () => done(true), { once: true });
       existing.addEventListener('error', () => done(false), { once: true });
       window.setTimeout(() => {
-        if (isAdSenseRuntimeReady()) {
-          done(true);
-        }
+        // Resolve after grace timeout even if load fired before React hydrated
+        done(isAdSenseRuntimeReady() || existing.dataset.errored !== 'true');
       }, 1500);
     });
     return inFlightScriptPromise;
