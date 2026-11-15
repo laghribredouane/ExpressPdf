@@ -19,6 +19,8 @@ import {
 import { CATEGORIES, TOOLS } from '../data/tools';
 import type { CategoryId, CurrencyCode, ToolId } from '../types/pdf';
 import { ToolIcon } from './ToolIcon';
+import { AdSenseBanner } from './AdSenseBanner';
+import { getAdSenseSlotId } from '../utils/adsense';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface HomeViewProps {
@@ -34,6 +36,7 @@ interface HomeViewProps {
   onOpenPremium: () => void;
   onOpenPricing?: () => void;
   isPremiumOrTrial?: boolean;
+  isAdFree?: boolean;
 }
 
 export function HomeView({
@@ -49,7 +52,9 @@ export function HomeView({
   onOpenPremium,
   onOpenPricing,
   isPremiumOrTrial = false,
+  isAdFree,
 }: HomeViewProps) {
+  const effectiveAdFree = isAdFree ?? isPremiumOrTrial;
   const normalizedQuery = searchQuery.toLowerCase().trim();
   const filteredTools = TOOLS.filter((t) => {
     const matchCat =
@@ -208,6 +213,16 @@ export function HomeView({
           </div>
         )}
       </section>
+
+      {!effectiveAdFree && getAdSenseSlotId('home') && (
+        <div className="px-3 sm:px-6 lg:px-8 pb-8 w-full max-w-7xl mx-auto">
+          <AdSenseBanner
+            placement="home"
+            isAdFree={effectiveAdFree}
+            onUpgradeClick={onOpenPricing || onOpenPremium}
+          />
+        </div>
+      )}
 
       {/* Section : Travaillez à votre façon */}
       <section

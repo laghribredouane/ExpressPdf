@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+  BookOpen,
   Calendar,
   ChevronDown,
   ChevronRight,
@@ -22,6 +23,7 @@ import {
   Trash2,
   UserPlus,
   X,
+  Share2,
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { CATEGORIES, MENU_CATEGORIES, TOOLS } from '../data/tools';
@@ -71,6 +73,8 @@ interface NavbarProps {
   isAdmin?: boolean;
   onOpenPricing: () => void;
   onOpenAdmin: () => void;
+  onOpenDocs?: () => void;
+  onNotify?: (msg: string, type?: 'info' | 'success' | 'error') => void;
 }
 
 const SIX_CORE_CATEGORIES = MENU_CATEGORIES.slice(0, 6);
@@ -114,6 +118,8 @@ export function Navbar({
   isAdmin = false,
   onOpenPricing,
   onOpenAdmin,
+  onOpenDocs,
+  onNotify,
 }: NavbarProps) {
   const [openMenu, setOpenMenu] = useState<'convert' | 'all' | 'tablet-all' | null>(null);
   const [drawerOpen, setDrawerOpen] = useState<'nav' | 'grid' | null>(null);
@@ -176,6 +182,31 @@ export function Navbar({
     const idx = order.indexOf(language);
     const next = order[(idx + 1) % order.length];
     onLanguageChange(next);
+  };
+
+  const handleShare = async () => {
+    const shareData = {
+      title: 'PDFExpress – 34 Outils PDF Gratuits',
+      text: 'Découvrez PDFExpress : la suite complète de 34 outils PDF et IA directement dans votre navigateur.',
+      url: window.location.href,
+    };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        await navigator.clipboard.writeText(window.location.href);
+        onNotify?.('Lien copié dans le presse-papier !', 'success');
+      }
+    } catch (err) {
+      if ((err as Error)?.name !== 'AbortError') {
+        try {
+          await navigator.clipboard.writeText(window.location.href);
+          onNotify?.('Lien copié dans le presse-papier !', 'success');
+        } catch {
+          onNotify?.('Impossible de partager le lien.', 'error');
+        }
+      }
+    }
   };
 
   const compactStatusLabel =
@@ -468,6 +499,16 @@ export function Navbar({
             >
               Tarifs
             </button>
+
+            {onOpenDocs && (
+              <button
+                type="button"
+                onClick={onOpenDocs}
+                className="text-xs font-bold tracking-wide text-neutral-700 dark:text-neutral-200 hover:text-brand-red dark:hover:text-brand-red transition-colors whitespace-nowrap shrink-0 py-2 hidden sm:block"
+              >
+                Documentation
+              </button>
+            )}
           </nav>
 
           {/* ZONE 3 : Actions, Statut, Recherche, Langue, Compte, Admin, Thème */}
@@ -868,6 +909,17 @@ export function Navbar({
             {/* Bouton Installation PWA (Desktop & Tablette) */}
             <PWAInstallButton variant="header" />
 
+            {/* Bouton Partager (Web Share API) */}
+            <button
+              type="button"
+              onClick={handleShare}
+              title="Partager le lien de PDFExpress"
+              aria-label="Partager"
+              className="min-w-[40px] min-h-[44px] px-2 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 inline-flex items-center justify-center transition-colors shrink-0"
+            >
+              <Share2 className="w-4 h-4" />
+            </button>
+
             {/* Bouton Langue compact (Mobile, Tablette & PC) */}
             <button
               type="button"
@@ -908,6 +960,17 @@ export function Navbar({
               ) : (
                 <Moon className="w-4 h-4" />
               )}
+            </button>
+
+            {/* Bouton Partager (Web Share API) */}
+            <button
+              type="button"
+              onClick={handleShare}
+              title="Partager PDFExpress"
+              aria-label="Partager PDFExpress"
+              className="min-w-[44px] min-h-[44px] rounded-xl bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-200 dark:hover:bg-neutral-700 flex items-center justify-center transition-colors shrink-0"
+            >
+              <Share2 className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -1420,6 +1483,25 @@ export function Navbar({
                         </ul>
                       </div>
                     ))}
+
+                    {onOpenDocs && (
+                      <div className="pt-4 border-t border-neutral-200 dark:border-brand-borderDark mt-4">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDrawerOpen(null);
+                            onOpenDocs();
+                          }}
+                          className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-neutral-900 text-white dark:bg-white dark:text-neutral-900 text-xs font-black flex items-center justify-between shadow-md hover:bg-brand-red dark:hover:bg-brand-red dark:hover:text-white transition-colors"
+                        >
+                          <span className="inline-flex items-center gap-2.5">
+                            <BookOpen className="w-4 h-4 text-brand-red dark:text-brand-red" />
+                            <span>📚 Documentation des 34 outils</span>
+                          </span>
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

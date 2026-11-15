@@ -6,7 +6,8 @@ export type FooterAction =
   | { type: 'category'; categoryId: CategoryId }
   | { type: 'info'; pageId: string }
   | { type: 'scroll'; elementId: string }
-  | { type: 'premium' };
+  | { type: 'premium' }
+  | { type: 'pricing' };
 
 export interface FooterLinkItem {
   label: string;
@@ -25,9 +26,31 @@ export const FOOTER_COLUMNS: FooterColumn[] = [
       { label: 'Accueil', action: { type: 'home' } },
       { label: 'Catalogue des outils (35)', action: { type: 'scroll', elementId: 'tools-catalog' } },
       { label: 'Fonctionnalités', action: { type: 'info', pageId: 'features' } },
-      { label: 'Tarification (MAD / USD / EUR)', action: { type: 'premium' } },
-      { label: 'Offre Premium', action: { type: 'scroll', elementId: 'premium-section' } },
+      { label: 'Tarification (MAD / USD / EUR)', action: { type: 'pricing' } },
+      { label: 'Offre Premium', action: { type: 'premium' } },
       { label: 'FAQ', action: { type: 'info', pageId: 'faq' } },
+    ],
+  },
+  {
+    heading: 'SOLUTIONS',
+    links: [
+      { label: 'Travaillez à votre façon', action: { type: 'info', pageId: 'solutions_workflow' } },
+      { label: 'Entreprise', action: { type: 'info', pageId: 'solutions_business' } },
+      { label: 'Éducation', action: { type: 'info', pageId: 'solutions_education' } },
+      { label: 'Créer un flux de travail', action: { type: 'tool', toolId: 'workflow' } },
+      { label: 'Intelligence PDF (IA)', action: { type: 'category', categoryId: 'intelligence' } },
+      { label: 'Convertir des PDF', action: { type: 'category', categoryId: 'convertir' } },
+    ],
+  },
+  {
+    heading: 'ENTREPRISE',
+    links: [
+      { label: 'À propos de nous', action: { type: 'info', pageId: 'about' } },
+      { label: 'Contactez-nous', action: { type: 'info', pageId: 'contact' } },
+      { label: 'Blog & Guides', action: { type: 'info', pageId: 'blog' } },
+      { label: 'Presse', action: { type: 'info', pageId: 'press' } },
+      { label: 'Nouveautés', action: { type: 'info', pageId: 'changelog' } },
+      { label: 'Plan du site', action: { type: 'info', pageId: 'sitemap' } },
     ],
   },
   {
@@ -42,36 +65,14 @@ export const FOOTER_COLUMNS: FooterColumn[] = [
     ],
   },
   {
-    heading: 'SOLUTIONS',
-    links: [
-      { label: 'Travaillez à votre façon', action: { type: 'scroll', elementId: 'work-your-way' } },
-      { label: 'Entreprise', action: { type: 'info', pageId: 'enterprise' } },
-      { label: 'Éducation', action: { type: 'info', pageId: 'education' } },
-      { label: 'Créer un flux de travail', action: { type: 'tool', toolId: 'workflow' } },
-      { label: 'Intelligence PDF (IA)', action: { type: 'category', categoryId: 'intelligence' } },
-      { label: 'Convertir des PDF', action: { type: 'category', categoryId: 'convertir' } },
-    ],
-  },
-  {
     heading: 'JURIDIQUE',
     links: [
-      { label: 'Confiance & Conformité', action: { type: 'scroll', elementId: 'trust-security' } },
+      { label: 'Confiance & Conformité', action: { type: 'info', pageId: 'legal_compliance' } },
       { label: 'Sécurité des données', action: { type: 'info', pageId: 'security' } },
       { label: 'Politique de confidentialité', action: { type: 'info', pageId: 'privacy' } },
       { label: 'Conditions générales', action: { type: 'info', pageId: 'terms' } },
       { label: 'Cookies', action: { type: 'info', pageId: 'cookies' } },
       { label: 'Accessibilité', action: { type: 'info', pageId: 'accessibility' } },
-    ],
-  },
-  {
-    heading: 'ENTREPRISE',
-    links: [
-      { label: 'À propos de nous', action: { type: 'info', pageId: 'about' } },
-      { label: 'Contactez-nous', action: { type: 'info', pageId: 'contact' } },
-      { label: 'Blog & Guides', action: { type: 'info', pageId: 'blog' } },
-      { label: 'Presse', action: { type: 'info', pageId: 'press' } },
-      { label: 'Nouveautés', action: { type: 'info', pageId: 'changelog' } },
-      { label: 'Plan du site', action: { type: 'info', pageId: 'sitemap' } },
     ],
   },
 ];
@@ -356,5 +357,57 @@ export const SITE_INFO_PAGES: Record<string, SiteInfoPage> = {
     ],
     ctaLabel: 'Explorer Créer un flux de travail',
     ctaToolId: 'workflow',
+  },
+  solutions_workflow: {
+    id: 'solutions_workflow',
+    section: 'Solutions',
+    title: 'Travaillez à votre façon (Cloud & Bureau)',
+    subtitle: 'Adaptez PDFExpress à vos méthodes de travail, que ce soit instantanément dans le navigateur ou hors ligne.',
+    highlights: [
+      'Traitement 100% local en mémoire vive pour une confidentialité absolue.',
+      'Possibilité de travailler hors ligne sans connexion Internet requise.',
+      'Raccourcis et intégration transparente avec Google Workspace (Calendar, Gmail).',
+    ],
+    ctaLabel: 'Essayer Compresser PDF',
+    ctaToolId: 'compress',
+  },
+  solutions_business: {
+    id: 'solutions_business',
+    section: 'Solutions',
+    title: 'Solutions Entreprise & Équipes',
+    subtitle: 'Standardisez les flux documentaires de votre organisation avec des outils conformes et sécurisés.',
+    highlights: [
+      'Caviardage irrévisible et protection des données sensibles (RGPD).',
+      'Archivage à long terme au format ISO PDF/A-1b.',
+      'Flux de travail multi-étapes automatisés.',
+    ],
+    ctaLabel: 'Ouvrir Censurer PDF',
+    ctaToolId: 'redact',
+  },
+  solutions_education: {
+    id: 'solutions_education',
+    section: 'Solutions',
+    title: 'Solutions Éducation & Étudiants',
+    subtitle: 'Simplifiez la gestion de vos cours, mémoires, thèses et devoirs.',
+    highlights: [
+      'Fusion de chapitres et compression pour respect des limites d’envoi.',
+      'Conversion de présentations PowerPoint et notes Markdown.',
+      'Création rapide de formulaires interactifs.',
+    ],
+    ctaLabel: 'Ouvrir Formulaires PDF',
+    ctaToolId: 'pdfforms',
+  },
+  legal_compliance: {
+    id: 'legal_compliance',
+    section: 'Juridique',
+    title: 'Confiance & Conformité RGPD / ISO',
+    subtitle: 'PDFExpress respecte les standards les plus stricts en matière de traitement documentaire.',
+    highlights: [
+      'Conformité RGPD : aucun stockage serveur persistant de vos documents personnels.',
+      'Support du format ISO 19005 (PDF/A) pour les archives officielles.',
+      'Transparence totale du code exécuté localement dans votre navigateur.',
+    ],
+    ctaLabel: 'Ouvrir PDF en PDF/A',
+    ctaToolId: 'pdf2pdfa',
   },
 };

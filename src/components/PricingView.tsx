@@ -175,6 +175,10 @@ export function PricingView({
                 <X className="w-4 h-4 text-neutral-400 shrink-0 mt-0.5" />
                 <span>Mention « Traité avec PDFExpress Gratuit » en pied de page</span>
               </li>
+              <li className="flex items-start gap-2 text-neutral-500">
+                <X className="w-4 h-4 text-neutral-400 shrink-0 mt-0.5" />
+                <span>Affichage de publicités Google AdSense</span>
+              </li>
             </ul>
           </div>
 
@@ -244,6 +248,10 @@ export function PricingView({
                   <li className="flex items-start gap-2">
                     <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
                     <span>Zéro filigrane sur tous les documents générés</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>Expérience 100 % sans publicité (AdSense supprimé)</span>
                   </li>
                   {plan.features.map((feat) => (
                     <li key={feat} className="flex items-start gap-2">

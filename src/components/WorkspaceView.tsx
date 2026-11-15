@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Aperture,
+  ArrowDown,
   ArrowLeft,
   ArrowRight,
   ArrowRightCircle,
+  ArrowUp,
   Calendar,
   Check,
   CheckCircle2,
@@ -16,6 +18,7 @@ import {
   FileDiff,
   FilePlus,
   FileSpreadsheet,
+  GripVertical,
   ImagePlus,
   LayoutGrid,
   Lock,
@@ -23,6 +26,7 @@ import {
   Plus,
   Redo2,
   RotateCcw,
+  RotateCw,
   Sparkles,
   Trash2,
   Undo2,
@@ -37,6 +41,7 @@ import type {
   ExecutionResult,
   LoadedFile,
   PageOrderItem,
+  PdfChatContext,
   QuotaCheckResult,
   ToolDefinition,
   ToolId,
@@ -52,6 +57,8 @@ import {
   readFileAsDataURL,
   renderPdfPageToDataURL,
 } from '../utils/pdfEngine';
+import { getAdSenseSlotId } from '../utils/adsense';
+import { AdSenseBanner } from './AdSenseBanner';
 import { SignaturePad } from './SignaturePad';
 import { SocialPostStudio } from './SocialPostStudio';
 import { ToolIcon } from './ToolIcon';
@@ -80,6 +87,7 @@ interface WorkspaceViewProps {
     toolTitle: string;
   }) => void;
   isPremiumOrTrial?: boolean;
+  isAdFree?: boolean;
   isWatermarked?: boolean;
   maxFileMb?: number;
   maxBatchFiles?: number;
@@ -93,6 +101,8 @@ interface WorkspaceViewProps {
   onQuotaBlocked?: (result: QuotaCheckResult) => void;
   onQuotaConsumed?: (toolId: ToolId, files: File[]) => Promise<void> | void;
   onGlobalProgress?: (progress: number | null, message?: string) => void;
+  onActivePdfContextChange?: (ctx: PdfChatContext | null) => void;
+  onOpenPricing?: () => void;
 }
 
 type Stage = 'dropzone' | 'editor' | 'processing' | 'result';
@@ -120,6 +130,7 @@ const FILE_CARD_TOOLS = new Set([
   'translatepdf',
   'aiocr',
   'workflow',
+  'stampgenerator',
 ]);
 
 const THUMBNAIL_TOOLS = new Set([
@@ -172,6 +183,29 @@ const EMPTY_DOC_SNAPSHOT: DocumentEditSnapshot = {
   scannedImages: [],
 };
 
+const MAX_ORG_FILES = 15;
+
+const getOrgFileKey = (name: string, size: number) =>
+  `${name.trim().toLowerCase()}::${size}`;
+
+const ORG_FILE_DOT_COLORS = [
+  'bg-red-500',
+  'bg-blue-500',
+  'bg-emerald-500',
+  'bg-amber-500',
+  'bg-violet-500',
+  'bg-pink-500',
+  'bg-cyan-500',
+  'bg-orange-500',
+  'bg-indigo-500',
+  'bg-teal-500',
+  'bg-lime-600',
+  'bg-rose-500',
+  'bg-sky-500',
+  'bg-fuchsia-500',
+  'bg-stone-500',
+];
+
 const DEFAULT_HTML = `<!DOCTYPE html>
 <html>
 <head>
@@ -202,6 +236,7 @@ export function WorkspaceView({
   onSendResultViaGmail,
   onScheduleResultInCalendar,
   isPremiumOrTrial = false,
+  isAdFree,
   isWatermarked = true,
   maxFileMb = 200,
   maxBatchFiles = 999,
@@ -211,7 +246,10 @@ export function WorkspaceView({
   onQuotaBlocked,
   onQuotaConsumed,
   onGlobalProgress,
+  onActivePdfContextChange,
+  onOpenPricing,
 }: WorkspaceViewProps) {
+  const effectiveAdFree = isAdFree ?? isPremiumOrTrial;
   const [stage, setStage] = useState<Stage>('dropzone');
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const docHistory = useHistoryState<DocumentEditSnapshot>(
@@ -245,6 +283,10 @@ export function WorkspaceView({
 
   const [firstPageThumbs, setFirstPageThumbs] = useState<Record<string, string>>({});
   const [pageThumbnails, setPageThumbnails] = useState<string[]>([]);
+  const [orgThumbnailsByFile, setOrgThumbnailsByFile] = useState<Record<string, string[]>>({});
+  const [draggedPageIdx, setDraggedPageIdx] = useState<number | null>(null);
+  const [dragOverPageIdx, setDragOverPageIdx] = useState<number | null>(null);
+  const [orgFileFilter, setOrgFileFilter] = useState<'all' | number>('all');
 
   // Interactive Canvas state
   const [currentCanvasPage, setCurrentCanvasPage] = useState(1);
@@ -325,6 +367,14 @@ export function WorkspaceView({
     'pagenumbers',
     'compress',
   ]);
+  const [stampShape, setStampShape] = useState<'circle' | 'rectangle' | 'badge'>('circle');
+  const [stampTextTop, setStampTextTop] = useState('REPUBLIQUE FRANCAISE');
+  const [stampCenterText, setStampCenterText] = useState('APPROUVÉ');
+  const [stampTextBottom, setStampTextBottom] = useState(new Date().toLocaleDateString('fr-FR'));
+  const [stampColor, setStampColor] = useState<'red' | 'blue' | 'green' | 'black' | 'purple'>('red');
+  const [stampOpacity, setStampOpacity] = useState(90);
+  const [stampPosition, setStampPosition] = useState<'br' | 'bl' | 'tr' | 'tl' | 'center'>('br');
+  const [stampPageMode, setStampPageMode] = useState<'all' | 'first' | 'last'>('all');
 
   // Execution result
   const [progress, setProgress] = useState(25);
@@ -357,6 +407,7 @@ export function WorkspaceView({
   const sigImgCacheRef = useRef<Map<string, HTMLImageElement>>(new Map());
   const hoverPosRef = useRef<{ x: number; y: number } | null>(null);
   const createdPreviewUrlsRef = useRef<Set<string>>(new Set());
+  const pendingOrgFileKeysRef = useRef<Set<string>>(new Set());
 
   const stopWebcam = useCallback(() => {
     if (webcamStreamRef.current) {
@@ -388,11 +439,16 @@ export function WorkspaceView({
     });
     setFirstPageThumbs({});
     setPageThumbnails([]);
+    setOrgThumbnailsByFile({});
+    setDraggedPageIdx(null);
+    setDragOverPageIdx(null);
+    setOrgFileFilter('all');
     setCurrentCanvasPage(1);
     setSecondCompareName(null);
     setSecondPdfJsDoc(null);
     setCompareDiffLines(null);
     setStage('dropzone');
+    pendingOrgFileKeysRef.current.clear();
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [stopWebcam, revokeUrls, resetDocState]);
 
@@ -407,8 +463,41 @@ export function WorkspaceView({
       stopWebcam();
       createdPreviewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       createdPreviewUrlsRef.current.clear();
+      onActivePdfContextChange?.(null);
     };
-  }, [stopWebcam]);
+  }, [stopWebcam, onActivePdfContextChange]);
+
+  // Sync primary loaded PDF text to global AI Chat Assistant
+  const primaryLoadedFile = files[0] || null;
+  useEffect(() => {
+    if (!onActivePdfContextChange) return;
+    if (!primaryLoadedFile || !primaryLoadedFile.pdfJsDoc) {
+      onActivePdfContextChange(null);
+      return;
+    }
+
+    let cancelled = false;
+    extractFullTextFromPdfJs(primaryLoadedFile.pdfJsDoc)
+      .then((extractedText) => {
+        if (cancelled) return;
+        onActivePdfContextChange({
+          fileName: primaryLoadedFile.name,
+          pageCount: primaryLoadedFile.pageCount,
+          sizeFormatted: primaryLoadedFile.sizeFormatted,
+          extractedText,
+          source: 'workspace',
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          onActivePdfContextChange(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [primaryLoadedFile, onActivePdfContextChange]);
 
   const handleUndo = useCallback(() => {
     undoDocState();
@@ -460,8 +549,65 @@ export function WorkspaceView({
 
   const handleIncomingFiles = useCallback(
     async (incomingList: FileList | File[]) => {
-      const incoming = Array.from(incomingList);
+      let incoming = Array.from(incomingList);
       if (incoming.length === 0) return;
+
+      const reservedOrgKeys: string[] = [];
+
+      if (tool.id === 'organizepages') {
+        const existingKeys = new Set(
+          docStateRef.current.files.map((f) => getOrgFileKey(f.name, f.sizeBytes))
+        );
+        const batchKeys = new Set<string>();
+        const uniqueIncoming: File[] = [];
+        let duplicateCount = 0;
+
+        for (const f of incoming) {
+          const key = getOrgFileKey(f.name, f.size);
+          if (
+            existingKeys.has(key) ||
+            batchKeys.has(key) ||
+            pendingOrgFileKeysRef.current.has(key)
+          ) {
+            duplicateCount += 1;
+            continue;
+          }
+          batchKeys.add(key);
+          uniqueIncoming.push(f);
+        }
+
+        if (duplicateCount > 0) {
+          onNotify(
+            uniqueIncoming.length === 0
+              ? duplicateCount > 1
+                ? 'Ces fichiers PDF sont déjà présents dans Organiser PDF (duplication annulée).'
+                : `"${incoming[0].name}" est déjà présent dans Organiser PDF (duplication annulée).`
+              : `${duplicateCount} fichier(s) en double ignoré(s).`,
+            'info'
+          );
+        }
+
+        if (uniqueIncoming.length === 0) return;
+        incoming = uniqueIncoming;
+
+        const occupiedCount =
+          docStateRef.current.files.length + pendingOrgFileKeysRef.current.size;
+        const remainingSlots = MAX_ORG_FILES - occupiedCount;
+        if (remainingSlots <= 0) {
+          onNotify(
+            `Limite atteinte : maximum ${MAX_ORG_FILES} fichiers PDF dans Organiser PDF.`,
+            'info'
+          );
+          return;
+        }
+        if (incoming.length > remainingSlots) {
+          incoming = incoming.slice(0, remainingSlots);
+          onNotify(
+            `Limite de ${MAX_ORG_FILES} fichiers PDF : seuls les ${remainingSlots} premier(s) fichier(s) ont été ajoutés.`,
+            'info'
+          );
+        }
+      }
 
       if (checkUserQuota) {
         const filesToCheck = tool.multiple
@@ -476,6 +622,14 @@ export function WorkspaceView({
           onQuotaBlocked?.(quotaRes);
           return;
         }
+      }
+
+      if (tool.id === 'organizepages') {
+        incoming.forEach((f) => {
+          const key = getOrgFileKey(f.name, f.size);
+          pendingOrgFileKeysRef.current.add(key);
+          reservedOrgKeys.push(key);
+        });
       }
 
       setIsLoadingFiles(true);
@@ -561,6 +715,48 @@ export function WorkspaceView({
             files: [loaded[0]],
           });
           setSplitRanges(`1-${loaded[0].pageCount}`);
+        } else if (tool.id === 'organizepages') {
+          const applyOrgFiles = (prev: DocumentEditSnapshot): DocumentEditSnapshot => {
+            const prevKeys = new Set(
+              prev.files.map((f) => getOrgFileKey(f.name, f.sizeBytes))
+            );
+            const uniqueLoaded: LoadedFile[] = [];
+            for (const lf of loaded) {
+              const key = getOrgFileKey(lf.name, lf.sizeBytes);
+              if (prevKeys.has(key)) {
+                if (lf.previewUrl) {
+                  URL.revokeObjectURL(lf.previewUrl);
+                  createdPreviewUrlsRef.current.delete(lf.previewUrl);
+                }
+                continue;
+              }
+              prevKeys.add(key);
+              uniqueLoaded.push(lf);
+            }
+            const available = Math.max(0, MAX_ORG_FILES - prev.files.length);
+            const accepted = uniqueLoaded.slice(0, available);
+            if (accepted.length === 0) return prev;
+
+            const startIdx = prev.files.length;
+            const appendedOrder: PageOrderItem[] = [];
+            accepted.forEach((f, offset) => {
+              const fIdx = startIdx + offset;
+              for (let p = 0; p < f.pageCount; p++) {
+                appendedOrder.push({ fileIndex: fIdx, originalIndex: p, rotation: 0 });
+              }
+            });
+            return {
+              ...prev,
+              files: [...prev.files, ...accepted],
+              pageOrder: [...prev.pageOrder, ...appendedOrder],
+            };
+          };
+
+          if (docStateRef.current.files.length === 0) {
+            replaceDocState(applyOrgFiles);
+          } else {
+            setDocState(applyOrgFiles);
+          }
         } else if (docStateRef.current.files.length === 0) {
           resetDocState({
             ...EMPTY_DOC_SNAPSHOT,
@@ -576,6 +772,7 @@ export function WorkspaceView({
         setCurrentCanvasPage(1);
         setStage('editor');
       } finally {
+        reservedOrgKeys.forEach((k) => pendingOrgFileKeysRef.current.delete(k));
         setIsLoadingFiles(false);
         onGlobalProgress?.(null);
       }
@@ -586,7 +783,9 @@ export function WorkspaceView({
       checkUserQuota,
       onQuotaBlocked,
       onNotify,
+      onGlobalProgress,
       resetDocState,
+      replaceDocState,
       setDocState,
     ]
   );
@@ -626,9 +825,42 @@ export function WorkspaceView({
   // Generate all-page thumbnails for Thumbnail tools
   useEffect(() => {
     if (stage !== 'editor' || !THUMBNAIL_TOOLS.has(tool.id)) return;
+    let cancelled = false;
+
+    if (tool.id === 'organizepages') {
+      const generateMultiOrg = async () => {
+        for (const item of files) {
+          if (cancelled) return;
+          if (!item.pdfJsDoc || orgThumbnailsByFile[item.id]) continue;
+          const urls: string[] = [];
+          for (let p = 1; p <= item.pdfJsDoc.numPages; p++) {
+            if (cancelled) return;
+            urls.push(await renderPdfPageToDataURL(item.pdfJsDoc, p, 0.4));
+          }
+          if (!cancelled) {
+            setOrgThumbnailsByFile((prev) => ({ ...prev, [item.id]: urls }));
+          }
+        }
+        if (pageOrder.length === 0 && files.length > 0 && !cancelled) {
+          const initialOrder: PageOrderItem[] = [];
+          files.forEach((f, fIdx) => {
+            for (let p = 0; p < f.pageCount; p++) {
+              initialOrder.push({ fileIndex: fIdx, originalIndex: p, rotation: 0 });
+            }
+          });
+          replaceDocState((prev) =>
+            prev.pageOrder.length === 0 ? { ...prev, pageOrder: initialOrder } : prev
+          );
+        }
+      };
+      void generateMultiOrg();
+      return () => {
+        cancelled = true;
+      };
+    }
+
     const primaryDoc = files[0]?.pdfJsDoc;
     if (!primaryDoc) return;
-    let cancelled = false;
 
     const generateAll = async () => {
       const total = primaryDoc.numPages;
@@ -644,7 +876,7 @@ export function WorkspaceView({
       if (pageOrder.length === 0) {
         const initialOrder: PageOrderItem[] = [];
         for (let i = 0; i < total; i++) {
-          initialOrder.push({ originalIndex: i, rotation: 0 });
+          initialOrder.push({ fileIndex: 0, originalIndex: i, rotation: 0 });
         }
         if (!cancelled) {
           replaceDocState((prev) =>
@@ -653,11 +885,11 @@ export function WorkspaceView({
         }
       }
     };
-    generateAll();
+    void generateAll();
     return () => {
       cancelled = true;
     };
-  }, [stage, tool.id, files, pageThumbnails.length, pageOrder.length, replaceDocState]);
+  }, [stage, tool.id, files, pageThumbnails.length, orgThumbnailsByFile, pageOrder.length, replaceDocState]);
 
   // Redraw interactive overlay canvas
   const redrawOverlay = useCallback(() => {
@@ -1247,6 +1479,156 @@ export function WorkspaceView({
     });
   };
 
+  const rotateOrgPage = (idx: number) => {
+    docHistory.setState((prev) => {
+      const copy = [...prev.pageOrder];
+      const item = copy[idx];
+      if (!item) return prev;
+      copy[idx] = { ...item, rotation: (item.rotation + 90) % 360 };
+      return { ...prev, pageOrder: copy };
+    });
+  };
+
+  const removeOrgSourceFile = (removeIdx: number) => {
+    if (files.length <= 1) {
+      resetWorkspace();
+      return;
+    }
+    if (orgFileFilter === removeIdx) {
+      setOrgFileFilter('all');
+    } else if (typeof orgFileFilter === 'number' && orgFileFilter > removeIdx) {
+      setOrgFileFilter(orgFileFilter - 1);
+    }
+    docHistory.setState((prev) => {
+      const nextFiles = prev.files.filter((_, i) => i !== removeIdx);
+      const nextOrder = prev.pageOrder
+        .filter((p) => (p.fileIndex ?? 0) !== removeIdx)
+        .map((p) => ({
+          ...p,
+          fileIndex: (p.fileIndex ?? 0) > removeIdx ? (p.fileIndex ?? 0) - 1 : (p.fileIndex ?? 0),
+        }));
+      const ensuredOrder: PageOrderItem[] =
+        nextOrder.length > 0
+          ? nextOrder
+          : nextFiles.flatMap((f, fIdx) =>
+              Array.from({ length: f.pageCount }, (_, p) => ({
+                fileIndex: fIdx,
+                originalIndex: p,
+                rotation: 0,
+              }))
+            );
+      return {
+        ...prev,
+        files: nextFiles,
+        pageOrder: ensuredOrder,
+      };
+    });
+  };
+
+  const reorderOrgPage = (fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx) return;
+    docHistory.setState((prev) => {
+      if (
+        fromIdx < 0 ||
+        toIdx < 0 ||
+        fromIdx >= prev.pageOrder.length ||
+        toIdx >= prev.pageOrder.length
+      ) {
+        return prev;
+      }
+      const copy = [...prev.pageOrder];
+      const [moved] = copy.splice(fromIdx, 1);
+      copy.splice(toIdx, 0, moved);
+      return { ...prev, pageOrder: copy };
+    });
+  };
+
+  const moveOrgSourceFile = (fileIdx: number, dir: -1 | 1) => {
+    const targetIdx = fileIdx + dir;
+    if (targetIdx < 0 || targetIdx >= files.length) return;
+    if (orgFileFilter === fileIdx) setOrgFileFilter(targetIdx);
+    else if (orgFileFilter === targetIdx) setOrgFileFilter(fileIdx);
+
+    docHistory.setState((prev) => {
+      if (targetIdx < 0 || targetIdx >= prev.files.length) return prev;
+      const nextFiles = [...prev.files];
+      [nextFiles[fileIdx], nextFiles[targetIdx]] = [
+        nextFiles[targetIdx],
+        nextFiles[fileIdx],
+      ];
+
+      const remappedOrder = prev.pageOrder.map((item) => {
+        const cur = item.fileIndex ?? 0;
+        if (cur === fileIdx) return { ...item, fileIndex: targetIdx };
+        if (cur === targetIdx) return { ...item, fileIndex: fileIdx };
+        return item;
+      });
+
+      const groupedOrder: PageOrderItem[] = [];
+      for (let i = 0; i < nextFiles.length; i++) {
+        groupedOrder.push(...remappedOrder.filter((p) => (p.fileIndex ?? 0) === i));
+      }
+
+      return {
+        ...prev,
+        files: nextFiles,
+        pageOrder: groupedOrder,
+      };
+    });
+  };
+
+  const groupOrgPagesByFile = () => {
+    docHistory.setState((prev) => {
+      const grouped: PageOrderItem[] = [];
+      for (let i = 0; i < prev.files.length; i++) {
+        grouped.push(...prev.pageOrder.filter((p) => (p.fileIndex ?? 0) === i));
+      }
+      return { ...prev, pageOrder: grouped };
+    });
+  };
+
+  const sortOrgFilesAlphabetically = () => {
+    setOrgFileFilter('all');
+    docHistory.setState((prev) => {
+      const indexed = prev.files.map((f, oldIdx) => ({ f, oldIdx }));
+      indexed.sort((a, b) => a.f.name.localeCompare(b.f.name, 'fr'));
+      const oldToNew = new Map<number, number>();
+      indexed.forEach((entry, newIdx) => oldToNew.set(entry.oldIdx, newIdx));
+
+      const nextFiles = indexed.map((e) => e.f);
+      const remapped = prev.pageOrder.map((p) => ({
+        ...p,
+        fileIndex: oldToNew.get(p.fileIndex ?? 0) ?? 0,
+      }));
+      const grouped: PageOrderItem[] = [];
+      for (let i = 0; i < nextFiles.length; i++) {
+        grouped.push(...remapped.filter((p) => (p.fileIndex ?? 0) === i));
+      }
+      return {
+        ...prev,
+        files: nextFiles,
+        pageOrder: grouped,
+      };
+    });
+  };
+
+  const reverseOrgPages = () => {
+    docHistory.setState((prev) => ({
+      ...prev,
+      pageOrder: [...prev.pageOrder].reverse(),
+    }));
+  };
+
+  const rotateAllOrgPages = () => {
+    docHistory.setState((prev) => ({
+      ...prev,
+      pageOrder: prev.pageOrder.map((p) => ({
+        ...p,
+        rotation: (p.rotation + 90) % 360,
+      })),
+    }));
+  };
+
   // Execute tool action
   const handleExecute = async () => {
     const rawFiles = files.map((f) => f.file);
@@ -1330,6 +1712,14 @@ export function WorkspaceView({
           aiOcrLang,
           aiOcrOutput,
           workflowSteps,
+          stampShape,
+          stampTextTop,
+          stampCenterText,
+          stampTextBottom,
+          stampColor,
+          stampOpacity,
+          stampPosition,
+          stampPageMode,
         },
         onProgress: (pct) => {
           setProgress(pct);
@@ -1541,7 +1931,9 @@ export function WorkspaceView({
                 <span>Max {maxFileMb} Mo / fichier</span>
                 <span>·</span>
                 <span>
-                  {maxBatchFiles >= 999
+                  {tool.id === 'organizepages'
+                    ? `Max ${MAX_ORG_FILES} fichiers PDF`
+                    : maxBatchFiles >= 999
                     ? 'Lots illimités'
                     : `Max ${maxBatchFiles} fichier(s)`}
                 </span>
@@ -1605,6 +1997,14 @@ export function WorkspaceView({
               </div>
             )}
           </div>
+          {!effectiveAdFree && getAdSenseSlotId('workspace') && (
+            <AdSenseBanner
+              placement="workspace"
+              isAdFree={effectiveAdFree}
+              onUpgradeClick={onOpenPricing}
+              className="w-full max-w-2xl mt-5 text-left"
+            />
+          )}
         </motion.div>
       )}
 
@@ -1649,6 +2049,7 @@ export function WorkspaceView({
                 <div className="flex items-center gap-3">
                   <span className="text-xs sm:text-sm font-bold text-neutral-700 dark:text-neutral-200 bg-white dark:bg-brand-cardDark px-3.5 py-1.5 rounded-xl border border-neutral-200 dark:border-brand-borderDark tabular-nums">
                     {files.length} {files.length > 1 ? 'fichiers' : 'fichier'}
+                    {tool.id === 'organizepages' ? ` / ${MAX_ORG_FILES}` : ''}
                     {files.length > 0
                       ? ` · ${formatBytes(
                           files.reduce((sum, f) => sum + f.sizeBytes, 0)
@@ -1670,11 +2071,16 @@ export function WorkspaceView({
                   {tool.multiple && (
                     <button
                       type="button"
+                      disabled={tool.id === 'organizepages' && files.length >= MAX_ORG_FILES}
                       onClick={() => fileInputRef.current?.click()}
-                      className="bg-brand-red hover:bg-brand-redHover text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm inline-flex items-center gap-2 transition-colors"
+                      className="bg-brand-red hover:bg-brand-redHover disabled:opacity-45 disabled:pointer-events-none text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-sm inline-flex items-center gap-2 transition-colors"
                     >
                       <Plus className="w-4 h-4" />
-                      <span>Ajouter des fichiers</span>
+                      <span>
+                        {tool.id === 'organizepages' && files.length >= MAX_ORG_FILES
+                          ? `Limite (${MAX_ORG_FILES}/${MAX_ORG_FILES})`
+                          : 'Ajouter des fichiers'}
+                      </span>
                     </button>
                   )}
                 </div>
@@ -1850,21 +2256,83 @@ export function WorkspaceView({
                       </>
                     )}
                     {tool.id === 'organizepages' && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          docHistory.setState((prev) => ({
-                            ...prev,
-                            pageOrder: pageThumbnails.map((_, i) => ({
-                              originalIndex: i,
-                              rotation: 0,
-                            })),
-                          }))
-                        }
-                        className="text-xs font-bold text-neutral-500 hover:text-brand-red"
-                      >
-                        Réinitialiser l’ordre
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {files.length > 1 && (
+                          <select
+                            aria-label="Filtrer par fichier"
+                            value={orgFileFilter === 'all' ? 'all' : String(orgFileFilter)}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setOrgFileFilter(val === 'all' ? 'all' : Number(val));
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 text-xs font-semibold text-neutral-700 dark:text-neutral-200 max-w-[190px]"
+                          >
+                            <option value="all">
+                              Tous les fichiers ({pageOrder.length} p.)
+                            </option>
+                            {files.map((f, i) => (
+                              <option key={f.id} value={String(i)}>
+                                F{i + 1} · {f.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        {files.length > 1 && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={sortOrgFilesAlphabetically}
+                              title="Trier les fichiers de A à Z"
+                              className="px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 hover:border-brand-red text-xs font-semibold text-neutral-700 dark:text-neutral-200 transition-colors"
+                            >
+                              Trier A→Z
+                            </button>
+                            <button
+                              type="button"
+                              onClick={groupOrgPagesByFile}
+                              title="Regrouper les pages par fichier"
+                              className="px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 hover:border-brand-red text-xs font-semibold text-neutral-700 dark:text-neutral-200 transition-colors"
+                            >
+                              Grouper
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          onClick={reverseOrgPages}
+                          title="Inverser l’ordre de toutes les pages"
+                          className="px-2.5 py-1.5 rounded-lg border border-neutral-200 dark:border-neutral-700 bg-neutral-50 dark:bg-neutral-800 hover:border-brand-red text-xs font-semibold text-neutral-700 dark:text-neutral-200 transition-colors"
+                        >
+                          Inverser
+                        </button>
+                        <button
+                          type="button"
+                          onClick={rotateAllOrgPages}
+                          title="Pivoter toutes les pages de 90°"
+                          className="px-2.5 py-1.5 rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 text-xs font-bold transition-colors"
+                        >
+                          +90° Tout
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setOrgFileFilter('all');
+                            const resetOrder: PageOrderItem[] = [];
+                            files.forEach((f, fIdx) => {
+                              for (let p = 0; p < f.pageCount; p++) {
+                                resetOrder.push({ fileIndex: fIdx, originalIndex: p, rotation: 0 });
+                              }
+                            });
+                            docHistory.setState((prev) => ({
+                              ...prev,
+                              pageOrder: resetOrder,
+                            }));
+                          }}
+                          className="text-xs font-bold text-neutral-500 hover:text-brand-red px-1.5"
+                        >
+                          Réinitialiser
+                        </button>
+                      </div>
                     )}
                     {tool.id === 'rotate' && (
                       <button
@@ -1880,60 +2348,156 @@ export function WorkspaceView({
 
                 {tool.id === 'organizepages' ? (
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-                    {pageOrder.map((entry, idx) => (
-                      <div
-                        key={`${entry.originalIndex}-${idx}`}
-                        className="bg-white dark:bg-brand-cardDark rounded-2xl p-3 border border-neutral-200 dark:border-brand-borderDark flex flex-col items-center"
-                      >
-                        <div className="w-full h-40 bg-neutral-100 dark:bg-neutral-800 rounded-xl overflow-hidden flex items-center justify-center mb-2">
-                          <img
-                            src={pageThumbnails[entry.originalIndex]}
-                            alt={`Page ${entry.originalIndex + 1}`}
-                            style={{ transform: `rotate(${entry.rotation}deg)` }}
-                            className="max-h-full max-w-full object-contain transition-transform"
-                          />
+                    {pageOrder.map((entry, idx) => {
+                      const fIdx = entry.fileIndex ?? 0;
+                      if (orgFileFilter !== 'all' && fIdx !== orgFileFilter) {
+                        return null;
+                      }
+                      const sourceFile = files[fIdx];
+                      const thumbUrl = sourceFile
+                        ? orgThumbnailsByFile[sourceFile.id]?.[entry.originalIndex]
+                        : undefined;
+                      const dotColor = ORG_FILE_DOT_COLORS[fIdx % ORG_FILE_DOT_COLORS.length];
+                      const isDragging = draggedPageIdx === idx;
+                      const isDragOver = dragOverPageIdx === idx && draggedPageIdx !== idx;
+
+                      return (
+                        <div
+                          key={`${fIdx}-${entry.originalIndex}-${idx}`}
+                          draggable
+                          onDragStart={(e) => {
+                            setDraggedPageIdx(idx);
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.dataTransfer.setData('text/plain', String(idx));
+                          }}
+                          onDragOver={(e) => {
+                            if (Array.from(e.dataTransfer.types || []).includes('Files')) {
+                              return;
+                            }
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'move';
+                            if (dragOverPageIdx !== idx) {
+                              setDragOverPageIdx(idx);
+                            }
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverPageIdx === idx) {
+                              setDragOverPageIdx(null);
+                            }
+                          }}
+                          onDrop={(e) => {
+                            if (Array.from(e.dataTransfer.types || []).includes('Files')) {
+                              return;
+                            }
+                            e.preventDefault();
+                            const rawFrom = e.dataTransfer.getData('text/plain');
+                            const from =
+                              draggedPageIdx !== null
+                                ? draggedPageIdx
+                                : rawFrom !== ''
+                                ? Number(rawFrom)
+                                : NaN;
+                            setDraggedPageIdx(null);
+                            setDragOverPageIdx(null);
+                            if (Number.isInteger(from)) {
+                              reorderOrgPage(from, idx);
+                            }
+                          }}
+                          onDragEnd={() => {
+                            setDraggedPageIdx(null);
+                            setDragOverPageIdx(null);
+                          }}
+                          className={`bg-white dark:bg-brand-cardDark rounded-2xl p-3 border flex flex-col items-center cursor-grab active:cursor-grabbing transition-all select-none ${
+                            isDragOver
+                              ? 'border-brand-red ring-2 ring-brand-red/30 scale-[1.02]'
+                              : isDragging
+                              ? 'opacity-45 border-neutral-300 dark:border-neutral-600 scale-[0.98]'
+                              : 'border-neutral-200 dark:border-brand-borderDark hover:border-neutral-400 dark:hover:border-neutral-600'
+                          }`}
+                        >
+                          <div className="w-full flex items-center justify-between gap-1 mb-1.5 text-[11px] text-neutral-400">
+                            <span className="inline-flex items-center gap-1 font-mono font-bold text-neutral-600 dark:text-neutral-300 tabular-nums">
+                              <GripVertical className="w-3.5 h-3.5 text-neutral-400" />
+                              #{idx + 1}
+                            </span>
+                            {files.length > 1 && (
+                              <span className="inline-flex items-center gap-1 font-mono text-[10px] font-bold text-neutral-600 dark:text-neutral-300">
+                                <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+                                F{fIdx + 1}
+                              </span>
+                            )}
+                          </div>
+                          <div className="w-full h-36 bg-neutral-100 dark:bg-neutral-800 rounded-xl overflow-hidden flex items-center justify-center mb-2 relative pointer-events-none">
+                            {thumbUrl ? (
+                              <img
+                                src={thumbUrl}
+                                alt={`${sourceFile?.name || 'PDF'} - Page ${entry.originalIndex + 1}`}
+                                style={{ transform: `rotate(${entry.rotation}deg)` }}
+                                className="max-h-full max-w-full object-contain transition-transform"
+                              />
+                            ) : (
+                              <span className="text-[11px] text-neutral-400">Aperçu...</span>
+                            )}
+                          </div>
+                          {files.length > 1 && sourceFile && (
+                            <span
+                              className="text-[10px] font-semibold text-neutral-500 dark:text-neutral-400 truncate max-w-full mb-0.5"
+                              title={sourceFile.name}
+                            >
+                              {sourceFile.name}
+                            </span>
+                          )}
+                          <span className="text-xs font-bold mb-2 tabular-nums">
+                            Page {entry.originalIndex + 1}
+                            {entry.rotation ? ` (${entry.rotation}°)` : ''}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={idx === 0}
+                              onClick={() => moveOrgPage(idx, -1)}
+                              title="Déplacer avant"
+                              className="p-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 disabled:opacity-30"
+                            >
+                              <ArrowLeft className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => rotateOrgPage(idx)}
+                              title="Pivoter +90°"
+                              className="p-1.5 rounded-lg bg-purple-50 dark:bg-purple-900/30 text-purple-600 dark:text-purple-300"
+                            >
+                              <RotateCw className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => duplicateOrgPage(idx)}
+                              title="Dupliquer"
+                              className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-600"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteOrgPage(idx)}
+                              title="Supprimer"
+                              className="p-1.5 rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={idx === pageOrder.length - 1}
+                              onClick={() => moveOrgPage(idx, 1)}
+                              title="Déplacer après"
+                              className="p-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 disabled:opacity-30"
+                            >
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
-                        <span className="text-xs font-bold mb-2 tabular-nums">
-                          Page {entry.originalIndex + 1}
-                        </span>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            disabled={idx === 0}
-                            onClick={() => moveOrgPage(idx, -1)}
-                            title="Monter"
-                            className="p-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 disabled:opacity-30"
-                          >
-                            <ArrowLeft className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => duplicateOrgPage(idx)}
-                            title="Dupliquer"
-                            className="p-1.5 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-600"
-                          >
-                            <Copy className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => deleteOrgPage(idx)}
-                            title="Supprimer"
-                            className="p-1.5 rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={idx === pageOrder.length - 1}
-                            onClick={() => moveOrgPage(idx, 1)}
-                            title="Descendre"
-                            className="p-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 disabled:opacity-30"
-                          >
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
@@ -2376,8 +2940,90 @@ export function WorkspaceView({
                 )}
 
                 {tool.id === 'organizepages' && (
-                  <div className="p-4 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-xs text-neutral-600 dark:text-neutral-300">
-                    Utilisez les boutons sous chaque miniature pour déplacer, dupliquer ou supprimer des pages.
+                  <div className="space-y-3">
+                    <div className="p-3.5 rounded-xl bg-neutral-100 dark:bg-neutral-800 text-xs text-neutral-600 dark:text-neutral-300 leading-relaxed">
+                      Glissez-déposez les miniatures dans la grille pour réorganiser vos pages, ou réordonnez des documents complets ci-dessous (jusqu’à {MAX_ORG_FILES} PDF).
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase text-neutral-500 tabular-nums">
+                          Fichiers chargés ({files.length}/{MAX_ORG_FILES})
+                        </span>
+                        <button
+                          type="button"
+                          disabled={files.length >= MAX_ORG_FILES}
+                          onClick={() => fileInputRef.current?.click()}
+                          className="text-xs font-bold text-brand-red hover:underline disabled:opacity-40 disabled:pointer-events-none inline-flex items-center gap-1"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Ajouter PDF</span>
+                        </button>
+                      </div>
+                      <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                        {files.map((f, fIdx) => {
+                          const dotColor = ORG_FILE_DOT_COLORS[fIdx % ORG_FILE_DOT_COLORS.length];
+                          return (
+                            <div
+                              key={f.id}
+                              className="flex items-center justify-between gap-2 px-2.5 py-2 rounded-xl border border-neutral-200 dark:border-neutral-700 bg-white dark:bg-neutral-900 text-xs"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span
+                                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${dotColor}`}
+                                  title={`Fichier F${fIdx + 1}`}
+                                />
+                                <div className="min-w-0">
+                                  <p
+                                    className="font-semibold text-neutral-800 dark:text-neutral-100 truncate"
+                                    title={f.name}
+                                  >
+                                    <span className="font-mono text-[10px] text-neutral-400 mr-1">
+                                      F{fIdx + 1}
+                                    </span>
+                                    {f.name}
+                                  </p>
+                                  <p className="text-[11px] text-neutral-500 tabular-nums">
+                                    {f.pageCount} page{f.pageCount > 1 ? 's' : ''} • {f.sizeFormatted}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                {files.length > 1 && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      disabled={fIdx === 0}
+                                      onClick={() => moveOrgSourceFile(fIdx, -1)}
+                                      title="Monter ce PDF"
+                                      className="p-1 rounded-lg text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-25"
+                                    >
+                                      <ArrowUp className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={fIdx === files.length - 1}
+                                      onClick={() => moveOrgSourceFile(fIdx, 1)}
+                                      title="Descendre ce PDF"
+                                      className="p-1 rounded-lg text-neutral-400 hover:text-neutral-800 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-800 disabled:opacity-25"
+                                    >
+                                      <ArrowDown className="w-3.5 h-3.5" />
+                                    </button>
+                                  </>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => removeOrgSourceFile(fIdx)}
+                                  title={`Retirer ${f.name}`}
+                                  className="p-1 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -2858,6 +3504,106 @@ export function WorkspaceView({
                         onChange={(e) => setWmOpacity(Number(e.target.value))}
                         className="w-full accent-purple-600"
                       />
+                    </div>
+                  </>
+                )}
+
+                {tool.id === 'stampgenerator' && (
+                  <>
+                    <div>
+                      <label className="block text-xs font-bold uppercase text-neutral-500 mb-1">
+                        Forme du cachet
+                      </label>
+                      <select
+                        value={stampShape}
+                        onChange={(e) => setStampShape(e.target.value as 'circle' | 'rectangle' | 'badge')}
+                        className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-sm font-bold"
+                      >
+                        <option value="circle">Circulaire (Classique)</option>
+                        <option value="rectangle">Rectangulaire</option>
+                        <option value="badge">Badge Double Bordure</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase text-neutral-500 mb-1">
+                        Texte En-Tête
+                      </label>
+                      <input
+                        type="text"
+                        value={stampTextTop}
+                        onChange={(e) => setStampTextTop(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase text-neutral-500 mb-1">
+                        Texte Principal (Centre)
+                      </label>
+                      <input
+                        type="text"
+                        value={stampCenterText}
+                        onChange={(e) => setStampCenterText(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-sm font-bold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase text-neutral-500 mb-1">
+                        Texte Bas / Date
+                      </label>
+                      <input
+                        type="text"
+                        value={stampTextBottom}
+                        onChange={(e) => setStampTextBottom(e.target.value)}
+                        className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-sm"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-xs font-bold text-neutral-500 mb-1">
+                          Couleur Encre
+                        </label>
+                        <select
+                          value={stampColor}
+                          onChange={(e) => setStampColor(e.target.value as 'red' | 'blue' | 'green' | 'black' | 'purple')}
+                          className="w-full px-2.5 py-2 rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-xs"
+                        >
+                          <option value="red">Rouge</option>
+                          <option value="blue">Bleu</option>
+                          <option value="green">Vert</option>
+                          <option value="black">Noir</option>
+                          <option value="purple">Violet</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-neutral-500 mb-1">
+                          Position
+                        </label>
+                        <select
+                          value={stampPosition}
+                          onChange={(e) => setStampPosition(e.target.value as 'br' | 'bl' | 'tr' | 'tl' | 'center')}
+                          className="w-full px-2.5 py-2 rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-xs"
+                        >
+                          <option value="br">Bas - Droite</option>
+                          <option value="bl">Bas - Gauche</option>
+                          <option value="tr">Haut - Droite</option>
+                          <option value="tl">Haut - Gauche</option>
+                          <option value="center">Centre</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase text-neutral-500 mb-1">
+                        Pages cibles
+                      </label>
+                      <select
+                        value={stampPageMode}
+                        onChange={(e) => setStampPageMode(e.target.value as 'all' | 'first' | 'last')}
+                        className="w-full px-3 py-2 rounded-xl border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-800 text-sm"
+                      >
+                        <option value="all">Toutes les pages</option>
+                        <option value="first">Première page seulement</option>
+                        <option value="last">Dernière page seulement</option>
+                      </select>
                     </div>
                   </>
                 )}
@@ -3343,6 +4089,14 @@ export function WorkspaceView({
                   </div>
                 )}
               </div>
+              {!effectiveAdFree && getAdSenseSlotId('workspace') && (
+                <AdSenseBanner
+                  placement="workspace"
+                  isAdFree={effectiveAdFree}
+                  onUpgradeClick={onOpenPricing}
+                  className="mt-5"
+                />
+              )}
             </div>
 
             <div className="sticky bottom-0 z-30 lg:static p-3 sm:p-5 border-t border-neutral-200 dark:border-brand-borderDark bg-white/95 dark:bg-brand-cardDark/95 backdrop-blur-md shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.16)] lg:shadow-none">
@@ -3485,6 +4239,14 @@ export function WorkspaceView({
               </button>
             </div>
           </div>
+          {!effectiveAdFree && getAdSenseSlotId('result') && (
+            <AdSenseBanner
+              placement="result"
+              isAdFree={effectiveAdFree}
+              onUpgradeClick={onOpenPricing}
+              className="w-full max-w-xl mt-5 text-left"
+            />
+          )}
         </motion.div>
       )}
       </AnimatePresence>

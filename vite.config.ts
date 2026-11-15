@@ -5,8 +5,36 @@ import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
+  let wsOrHmrDisabled = false;
   return {
     plugins: [
+      {
+        name: 'disable-hmr-client-ws',
+        apply: 'serve',
+        configResolved(resolved) {
+          wsOrHmrDisabled =
+            resolved.server.hmr === false || resolved.server.ws === false;
+        },
+        transform(code, id) {
+          if (
+            wsOrHmrDisabled &&
+            id.includes('vite/dist/client/client.mjs')
+          ) {
+            return code
+              .replace(
+                'let isConnected = !invokeableTransport.connect;',
+                'let isConnected = true;'
+              )
+              .replaceAll(
+                'await wsTransport.connect(handlers);',
+                'return; /* HMR WebSocket disabled */'
+              )
+              .replaceAll('await wsTransport.disconnect();', 'return;')
+              .replaceAll('wsTransport.send(data);', 'return;');
+          }
+          return null;
+        },
+      },
       react(),
       tailwindcss(),
       VitePWA({
@@ -127,18 +155,27 @@ export default defineConfig(() => {
           globPatterns: [
             '**/*.{js,css,html,ico,png,svg,woff,woff2,mjs,wasm}',
           ],
-          globIgnores: ['**/assets/aistudio/**'],
+          globIgnores: ['**/assets/aistudio/**', '**/ads.txt'],
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
           navigateFallback: '/index.html',
           navigateFallbackDenylist: [
             /^\/api\//,
-            /^\/sitemap\.xml$/,
-            /^\/robots\.txt$/,
+            /^\/ads\.txt(?:\?.*)?$/i,
+            /^\/sitemap\.xml(?:\?.*)?$/i,
+            /^\/robots\.txt(?:\?.*)?$/i,
           ],
           ignoreURLParametersMatching: [/^tool$/, /^source$/, /^utm_/],
           runtimeCaching: [
             {
-              urlPattern: /^\/api\/.*/i,
+              urlPattern: ({ url }) =>
+                url.origin === self.location.origin &&
+                /^\/ads\.txt$/i.test(url.pathname),
+              handler: 'NetworkOnly',
+            },
+            {
+              urlPattern: ({ url }) =>
+                url.origin === self.location.origin &&
+                url.pathname.startsWith('/api/'),
               handler: 'NetworkOnly',
             },
             {
@@ -221,6 +258,9 @@ export default defineConfig(() => {
             {
               urlPattern: ({ request, url }) =>
                 url.origin === self.location.origin &&
+                !url.pathname.startsWith('/@') &&
+                !url.pathname.startsWith('/src/') &&
+                !url.pathname.startsWith('/node_modules/') &&
                 (request.destination === 'script' ||
                   request.destination === 'style' ||
                   request.destination === 'worker'),
@@ -239,8 +279,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
     ],
@@ -284,10 +323,14 @@ export default defineConfig(() => {
       },
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modify—file watching is disabled to prevent flickering during agent edits.
-      hmr: process.env.DISABLE_HMR !== 'true',
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
+      hmr: process.env.DISABLE_HMR === 'true' ? false : undefined,
+      ws:
+        process.env.DISABLE_HMR === 'true'
+          ? false
+          : {
+              protocol: 'wss',
+              clientPort: 443,
+            },
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };

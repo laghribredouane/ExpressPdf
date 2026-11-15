@@ -9,11 +9,17 @@ import {
   X,
 } from 'lucide-react';
 import { AdminDashboardView } from './components/AdminDashboardView';
+import { AdSenseTester } from './components/AdSenseTester';
+import { AboutView } from './components/AboutView';
+import { AIChatAssistant } from './components/AIChatAssistant';
+import { ContactView } from './components/ContactView';
+import { FaqView } from './components/FaqView';
 import { AuthModal, type AuthModalMode } from './components/AuthModal';
 import { Footer } from './components/Footer';
 import { HomeView } from './components/HomeView';
 import { InfoModal } from './components/InfoModal';
 import { Navbar } from './components/Navbar';
+import { ToolDocumentationModal } from './components/ToolDocumentationModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { PremiumModal } from './components/PremiumModal';
 import { PricingView } from './components/PricingView';
@@ -40,6 +46,11 @@ import {
 } from './firebase';
 import { useSubscriptionAndQuota } from './hooks/useSubscriptionAndQuota';
 import {
+  ensureAdSenseScriptLoaded,
+  getAdSenseClientId,
+  removeAdSenseFromDocument,
+} from './utils/adsense';
+import {
   clearCloudHistory,
   deleteCloudHistoryEntry,
   ensureUserProfileDocs,
@@ -52,6 +63,7 @@ import type {
   BillingCycle,
   CategoryId,
   CurrencyCode,
+  PdfChatContext,
   QuotaCheckResult,
   RecentProcessedFile,
   ToastItem,
@@ -61,12 +73,15 @@ import type {
 const RECENT_CACHE_KEY = 'pdfexpress-recent-files';
 const PREMIUM_TRANSFER_KEY = 'pdfexpress-premium-transfer';
 
-type AppPage = 'main' | 'tarifs' | 'admin';
+type AppPage = 'main' | 'tarifs' | 'admin' | 'about' | 'contact' | 'faq';
 
 function getPageFromPathname(pathname: string): AppPage {
   const normalized = pathname.toLowerCase();
   if (normalized.startsWith('/tarifs')) return 'tarifs';
   if (normalized.startsWith('/admin')) return 'admin';
+  if (normalized.startsWith('/about')) return 'about';
+  if (normalized.startsWith('/contact')) return 'contact';
+  if (normalized.startsWith('/faq')) return 'faq';
   return 'main';
 }
 
@@ -93,6 +108,13 @@ export default function App() {
   const [activePage, setActivePage] = useState<AppPage>(() =>
     getPageFromPathname(window.location.pathname)
   );
+  const [adsenseTesterOpen, setAdsenseTesterOpen] = useState<boolean>(() => {
+    try {
+      return new URLSearchParams(window.location.search).get('adsense_test') === '1';
+    } catch {
+      return false;
+    }
+  });
   const [activeCategory, setActiveCategory] = useState<CategoryId>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [currentToolId, setCurrentToolId] = useState<ToolId | null>(() =>
@@ -173,6 +195,9 @@ export default function App() {
     progress: number;
     message: string;
   } | null>(null);
+  const [docsModalOpen, setDocsModalOpen] = useState(false);
+  const [workspacePdfContext, setWorkspacePdfContext] =
+    useState<PdfChatContext | null>(null);
 
   const dragCounterRef = useRef(0);
   const recentFilesRef = useRef(recentFiles);
@@ -275,7 +300,17 @@ export default function App() {
       setCurrentToolId(null);
     }
     const targetPath =
-      page === 'tarifs' ? '/tarifs' : page === 'admin' ? '/admin' : '/';
+      page === 'tarifs'
+        ? '/tarifs'
+        : page === 'admin'
+        ? '/admin'
+        : page === 'about'
+        ? '/about'
+        : page === 'contact'
+        ? '/contact'
+        : page === 'faq'
+        ? '/faq'
+        : '/';
     if (
       window.location.pathname !== targetPath ||
       (page === 'main' && window.location.search)
@@ -355,18 +390,61 @@ export default function App() {
     onDeviceTrialBlocked: handleDeviceTrialBlocked,
   });
 
+  const isSubscriptionResolved =
+    isAuthReady && (!authUser || profileReadyUid === authUser.uid);
+  const isAdFree = !isSubscriptionResolved || isPremiumOrTrial || isAdmin;
+
+  useEffect(() => {
+    if (!isSubscriptionResolved) return;
+    const paidOrTrial = isPremiumOrTrial || isAdmin;
+    try {
+      if (paidOrTrial) {
+        localStorage.setItem('pdfexpress_ad_free', '1');
+      } else {
+        localStorage.removeItem('pdfexpress_ad_free');
+      }
+    } catch {
+      // Ignore storage quota errors
+    }
+    if (paidOrTrial) {
+      removeAdSenseFromDocument();
+      return;
+    }
+    void ensureAdSenseScriptLoaded(getAdSenseClientId());
+  }, [isSubscriptionResolved, isPremiumOrTrial, isAdmin]);
+
   const handleQuotaBlocked = useCallback((result: QuotaCheckResult) => {
     setQuotaModalState({ isOpen: true, result });
   }, []);
 
-  // Global drag & drop listener
+  const handleConsumeDroppedFiles = useCallback(() => {
+    setDroppedFiles(null);
+  }, []);
+
+  const handleGlobalProgress = useCallback(
+    (pct: number | null, msg?: string) => {
+      setGlobalProgress(
+        pct !== null
+          ? { progress: pct, message: msg || 'Chargement des fichiers...' }
+          : null
+      );
+    },
+    []
+  );
+
+  // Global drag & drop listener (external files only, ignore internal element drags)
   useEffect(() => {
+    const isFileDrag = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types || []).includes('Files');
+
     const onDragEnter = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
       e.preventDefault();
       dragCounterRef.current += 1;
       setIsDraggingGlobal(true);
     };
     const onDragLeave = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
       e.preventDefault();
       dragCounterRef.current -= 1;
       if (dragCounterRef.current <= 0) {
@@ -375,12 +453,14 @@ export default function App() {
       }
     };
     const onDragOver = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
       e.preventDefault();
     };
     const onDrop = (e: DragEvent) => {
-      e.preventDefault();
       dragCounterRef.current = 0;
       setIsDraggingGlobal(false);
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
       if (e.dataTransfer && e.dataTransfer.files.length > 0) {
         const filesArr = Array.from(e.dataTransfer.files);
         setActivePage('main');
@@ -405,6 +485,25 @@ export default function App() {
       window.removeEventListener('dragover', onDragOver);
       window.removeEventListener('drop', onDrop);
     };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
+        const target = e.target as HTMLElement | null;
+        const isEditable =
+          target &&
+          (target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.isContentEditable);
+        if (!isEditable) {
+          e.preventDefault();
+          setAdsenseTesterOpen((prev) => !prev);
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   useEffect(() => {
@@ -813,7 +912,13 @@ export default function App() {
         onSelectTool={handleSelectTool}
         onSelectCategory={handleSelectCategory}
         onNavigateSection={handleNavigateSection}
-        onOpenInfoPage={(pageId) => setActiveInfoPageId(pageId)}
+        onOpenInfoPage={(pageId) => {
+          if (pageId === 'about' || pageId === 'contact' || pageId === 'faq') {
+            navigateToPage(pageId as AppPage);
+          } else {
+            setActiveInfoPageId(pageId);
+          }
+        }}
         onOpenPremium={() => {
           setPremiumInitialPlan('premium_pro');
           setPremiumInitialCycle('annual');
@@ -865,6 +970,8 @@ export default function App() {
         isAdmin={isAdmin}
         onOpenPricing={() => navigateToPage('tarifs')}
         onOpenAdmin={() => navigateToPage('admin')}
+        onOpenDocs={() => setDocsModalOpen(true)}
+        onNotify={notify}
       />
 
       {/* Bannières d'état SaaS contextuelles */}
@@ -1011,11 +1118,17 @@ export default function App() {
             setPremiumModalOpen(true);
           }}
         />
+      ) : activePage === 'about' ? (
+        <AboutView onBackHome={handleGoHome} />
+      ) : activePage === 'contact' ? (
+        <ContactView onBackHome={handleGoHome} onNotify={notify} />
+      ) : activePage === 'faq' ? (
+        <FaqView onBackHome={handleGoHome} />
       ) : currentTool ? (
         <WorkspaceView
           tool={currentTool}
           droppedFiles={droppedFiles}
-          onConsumeDroppedFiles={() => setDroppedFiles(null)}
+          onConsumeDroppedFiles={handleConsumeDroppedFiles}
           onGoHome={handleGoHome}
           onNotify={notify}
           onFileProcessed={handleFileProcessed}
@@ -1041,6 +1154,7 @@ export default function App() {
             })
           }
           isPremiumOrTrial={isPremiumOrTrial}
+          isAdFree={isAdFree}
           isWatermarked={currentLimits.isWatermarked}
           maxFileMb={currentLimits.maxFileMb}
           maxBatchFiles={currentLimits.maxBatchFiles}
@@ -1049,13 +1163,9 @@ export default function App() {
           checkUserQuota={checkUserQuota}
           onQuotaBlocked={handleQuotaBlocked}
           onQuotaConsumed={consumeQuota}
-          onGlobalProgress={(pct, msg) =>
-            setGlobalProgress(
-              pct !== null
-                ? { progress: pct, message: msg || 'Chargement des fichiers...' }
-                : null
-            )
-          }
+          onGlobalProgress={handleGlobalProgress}
+          onActivePdfContextChange={setWorkspacePdfContext}
+          onOpenPricing={() => navigateToPage('tarifs')}
         />
       ) : (
         <HomeView
@@ -1078,6 +1188,7 @@ export default function App() {
           }}
           onOpenPricing={() => navigateToPage('tarifs')}
           isPremiumOrTrial={isPremiumOrTrial}
+          isAdFree={isAdFree}
         />
       )}
 
@@ -1093,6 +1204,24 @@ export default function App() {
           setPremiumInitialPlan('premium_pro');
           setPremiumInitialCycle('annual');
           setPremiumModalOpen(true);
+        }}
+        onOpenPricing={() => navigateToPage('tarifs')}
+        onOpenDocs={() => setDocsModalOpen(true)}
+        onOpenAdSenseTester={() => setAdsenseTesterOpen(true)}
+      />
+
+      <AdSenseTester
+        isOpen={adsenseTesterOpen}
+        onClose={() => setAdsenseTesterOpen(false)}
+        isAdFree={isAdFree}
+      />
+
+      <ToolDocumentationModal
+        isOpen={docsModalOpen}
+        onClose={() => setDocsModalOpen(false)}
+        onSelectTool={(toolId) => {
+          handleSelectTool(toolId);
+          setDocsModalOpen(false);
         }}
       />
 
@@ -1194,6 +1323,10 @@ export default function App() {
         onSignInGoogle={() => handleSignInGoogle(true)}
       />
 
+      <AIChatAssistant
+        workspacePdfContext={workspacePdfContext}
+        onNotify={notify}
+      />
       <OfflineIndicator />
       <ToastContainer toasts={toasts} />
     </div>

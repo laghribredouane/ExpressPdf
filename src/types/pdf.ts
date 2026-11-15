@@ -48,7 +48,8 @@ export type ToolId =
   | 'translatepdf'
   | 'aiocr'
   | 'socialpost'
-  | 'workflow';
+  | 'workflow'
+  | 'stampgenerator';
 
 export interface CategoryDefinition {
   id: CategoryId;
@@ -84,6 +85,7 @@ export interface LoadedFile {
 }
 
 export interface PageOrderItem {
+  fileIndex: number;
   originalIndex: number;
   rotation: number;
 }
@@ -170,6 +172,14 @@ export interface ExecutionOptions {
   summaryOutput?: 'pdf' | 'txt';
   translateTargetLang?: string;
   workflowSteps?: WorkflowStepId[];
+  stampShape?: 'circle' | 'rectangle' | 'badge';
+  stampTextTop?: string;
+  stampCenterText?: string;
+  stampTextBottom?: string;
+  stampColor?: 'red' | 'blue' | 'green' | 'black' | 'purple';
+  stampOpacity?: number;
+  stampPosition?: 'br' | 'bl' | 'tr' | 'tl' | 'center';
+  stampPageMode?: 'all' | 'first' | 'last';
 }
 
 export interface ExecutionResult {
@@ -316,3 +326,21 @@ export interface QuotaCheckResult {
   remainingTasks: number | null;
   isWatermarked: boolean;
 }
+
+export interface PdfChatContext {
+  fileName: string;
+  pageCount: number;
+  sizeFormatted: string;
+  extractedText: string;
+  source: 'workspace' | 'chat-upload';
+}
+
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+  actionType?: 'qa' | 'summary' | 'translation';
+  mode?: 'ai' | 'local';
+}
+

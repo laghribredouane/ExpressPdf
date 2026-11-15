@@ -1,5 +1,6 @@
 import express from 'express';
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
@@ -14,6 +15,13 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '35mb' }));
+
+app.get('/ads.txt', (_req, res) => {
+  res.status(200);
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.send('google.com, pub-7807016100432800, DIRECT, f08c47fec0942fa0\n');
+});
 
 function getGeminiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -140,6 +148,129 @@ app.post('/api/ai/translate', async (req, res) => {
         err instanceof Error
           ? err.message
           : 'Erreur lors de la traduction du document.',
+    });
+  }
+});
+
+app.post('/api/ai/chat', async (req, res) => {
+  try {
+    const {
+      message,
+      history = [],
+      documentContext = '',
+      documentName = '',
+      pageCount = 0,
+      actionType = 'qa',
+    } = (req.body || {}) as {
+      message?: string;
+      history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+      documentContext?: string;
+      documentName?: string;
+      pageCount?: number;
+      actionType?: 'qa' | 'summary' | 'translation';
+    };
+
+    const userMessage = typeof message === 'string' ? message.trim() : '';
+    if (!userMessage) {
+      res.status(400).json({ error: 'Veuillez saisir un message pour l’assistant.' });
+      return;
+    }
+
+    const trimmedDoc = typeof documentContext === 'string' ? documentContext.trim() : '';
+    const ai = getGeminiClient();
+
+    if (!ai) {
+      if (actionType === 'summary' && trimmedDoc) {
+        res.json({
+          reply: localExtractiveSummary(trimmedDoc, 'bullets'),
+          mode: 'local',
+        });
+        return;
+      }
+      res.status(503).json({
+        error:
+          'L’assistant conversationnel Gemini nécessite une clé GEMINI_API_KEY configurée dans les secrets du projet.',
+      });
+      return;
+    }
+
+    const docSnippet = trimmedDoc.slice(0, 30000);
+    const hasDoc = docSnippet.length > 0;
+
+    const systemInstruction = hasDoc
+      ? [
+          'Tu es l’assistant IA officiel de PDFExpress, expert en analyse, synthèse, traduction et questions-réponses sur les documents PDF.',
+          `Document PDF actuellement analysé : "${documentName || 'Document.pdf'}"${pageCount > 0 ? ` (${pageCount} page(s))` : ''}.`,
+          'Règles impératives :',
+          '- Appuie-toi strictement sur le contenu du document fourni ci-dessous pour répondre aux questions, résumer ou traduire.',
+          '- Cite les numéros de page (ex. Page 2) lorsque cela aide l’utilisateur à retrouver l’information.',
+          '- Si une information demandée est absente du document, dis-le clairement sans l’inventer.',
+          '- Formate tes réponses en Markdown clair et structuré (titres courts, listes à puces, éléments clés en gras).',
+          '- Réponds dans la langue de la demande de l’utilisateur (par défaut en français).',
+          '',
+          '--- CONTENU EXTRAIT DU DOCUMENT PDF ---',
+          docSnippet,
+          trimmedDoc.length > 30000
+            ? '\n[Note : le texte du document a été tronqué aux 30 000 premiers caractères.]'
+            : '',
+        ].join('\n')
+      : [
+          'Tu es l’assistant IA officiel de PDFExpress (suite de 35+ outils PDF gratuits et locaux).',
+          'Aucun document PDF n’est actuellement chargé dans le chat.',
+          'Réponds de façon claire, concise et structurée en Markdown.',
+          'Si l’utilisateur te pose une question sur un document spécifique, invite-le aimablement à charger un fichier PDF directement dans le bandeau supérieur de cette fenêtre de chat ou via n’importe quel outil PDFExpress.',
+        ].join('\n');
+
+    const sanitizedHistory = Array.isArray(history)
+      ? history
+          .filter(
+            (item) =>
+              item &&
+              (item.role === 'user' || item.role === 'assistant') &&
+              typeof item.content === 'string' &&
+              item.content.trim().length > 0
+          )
+          .slice(-12)
+          .map((item) => ({
+            role: item.role === 'assistant' ? ('model' as const) : ('user' as const),
+            parts: [{ text: item.content.slice(0, 6000) }],
+          }))
+      : [];
+
+    // Ensure history starts with a user turn if non-empty
+    while (sanitizedHistory.length > 0 && sanitizedHistory[0].role !== 'user') {
+      sanitizedHistory.shift();
+    }
+
+    const chat = ai.chats.create({
+      model: 'gemini-4-hydrogen',
+      history: sanitizedHistory,
+      config: {
+        systemInstruction,
+      },
+    });
+
+    const response = await chat.sendMessage({ message: userMessage });
+    const reply = (response.text || '').trim();
+
+    if (!reply) {
+      res.status(502).json({
+        error: 'L’assistant n’a renvoyé aucune réponse. Veuillez réessayer.',
+      });
+      return;
+    }
+
+    res.json({
+      reply,
+      mode: 'ai',
+    });
+  } catch (err) {
+    console.error('AI chat error:', err);
+    res.status(500).json({
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Erreur lors de la communication avec l’assistant IA Gemini.',
     });
   }
 });
@@ -562,22 +693,302 @@ function getDynamicToolIds(): string[] {
   return FALLBACK_TOOL_IDS;
 }
 
+const EXPECTED_ADSENSE_CLIENT_ID = 'ca-pub-7807016100432800';
+const EXPECTED_ADSENSE_PUB_ID = 'pub-7807016100432800';
+const EXPECTED_ADS_TXT_LINE = `google.com, ${EXPECTED_ADSENSE_PUB_ID}, DIRECT, f08c47fec0942fa0`;
+const CANONICAL_PUBLIC_ORIGIN = 'https://pdfexpress.ai.studio';
+
 function getBaseUrl(req: express.Request): string {
-  const configured = process.env.APP_URL?.trim();
-  if (configured) {
-    return configured.replace(/\/+$/, '');
-  }
   const protoHeader = req.headers['x-forwarded-proto'];
   const proto =
-    (Array.isArray(protoHeader) ? protoHeader[0] : protoHeader)?.split(',')[0]?.trim() ||
+    (Array.isArray(protoHeader) ? protoHeader[0] : protoHeader)
+      ?.split(',')[0]
+      ?.trim() ||
     req.protocol ||
     'https';
   const hostHeader = req.headers['x-forwarded-host'] || req.get('host');
   const host =
-    (Array.isArray(hostHeader) ? hostHeader[0] : hostHeader)?.split(',')[0]?.trim() ||
-    `localhost:${PORT}`;
-  return `${proto}://${host}`;
+    (Array.isArray(hostHeader) ? hostHeader[0] : hostHeader)
+      ?.split(',')[0]
+      ?.trim() || '';
+
+  // Prioritize custom public domain (e.g. pdfexpress.ai.studio) over default .run.app APP_URL
+  if (host && !host.endsWith('.run.app') && !host.startsWith('localhost') && !host.startsWith('127.0.0.1')) {
+    return `${proto}://${host}`.replace(/\/+$/, '');
+  }
+
+  const configured = process.env.APP_URL?.trim();
+  if (configured && configured !== 'MY_APP_URL' && /^https?:\/\//i.test(configured)) {
+    return configured.replace(/\/+$/, '');
+  }
+
+  if (host) {
+    return `${proto}://${host}`.replace(/\/+$/, '');
+  }
+
+  return CANONICAL_PUBLIC_ORIGIN;
 }
+
+interface AdSenseEndpointProbe {
+  path: string;
+  url: string;
+  ok: boolean;
+  status: number;
+  redirectedTo302: boolean;
+  locationHeader: string | null;
+  contentType: string;
+  cacheControl: string;
+  latencyMs: number;
+  snippet: string;
+  error?: string;
+}
+
+interface AdSenseTargetReport {
+  baseUrl: string;
+  checkedAt: string;
+  overallStatus: 'pass' | 'warn' | 'fail';
+  detectedPublisherIds: string[];
+  detectedMetaClientId: string | null;
+  detectedScriptClientId: string | null;
+  detectedCanonicalUrl: string | null;
+  adsTxtMatchesExpected: boolean;
+  hasNo302Redirect: boolean;
+  headMetaValid: boolean;
+  headScriptValid: boolean;
+  canonicalMatchesTarget: boolean;
+  robotsAllowRoot: boolean;
+  probes: {
+    home: AdSenseEndpointProbe;
+    adsTxt: AdSenseEndpointProbe;
+    robotsTxt: AdSenseEndpointProbe;
+    sitemapXml: AdSenseEndpointProbe;
+  };
+}
+
+function isAllowedAdSenseVerifyHost(hostname: string, req: express.Request): boolean {
+  const lower = hostname.toLowerCase();
+  if (lower === 'pdfexpress.ai.studio' || lower === 'localhost' || lower === '127.0.0.1') {
+    return true;
+  }
+  const reqHostHeader = req.headers['x-forwarded-host'] || req.get('host');
+  const reqHost = (Array.isArray(reqHostHeader) ? reqHostHeader[0] : reqHostHeader || '')
+    .split(',')[0]
+    .trim()
+    .split(':')[0]
+    .toLowerCase();
+  if (reqHost && lower === reqHost) {
+    return true;
+  }
+  if (lower.endsWith('.run.app') && (lower.includes('pdfexpress') || lower.includes('ais-'))) {
+    return true;
+  }
+  return false;
+}
+
+async function probeEndpoint(baseUrl: string, endpointPath: string): Promise<AdSenseEndpointProbe & { fullBody: string }> {
+  const url = `${baseUrl}${endpointPath}`;
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      redirect: 'manual',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+        Accept: 'text/html,text/plain,application/xml,*/*;q=0.8',
+      },
+      signal: AbortSignal.timeout(6000),
+    });
+
+    const locationHeader = response.headers.get('location');
+    const contentType = response.headers.get('content-type') || '';
+    const cacheControl = response.headers.get('cache-control') || '';
+    const rawText = await response.text();
+    const trimmedBody = rawText.slice(0, 60000);
+
+    return {
+      path: endpointPath,
+      url,
+      ok: response.status === 200,
+      status: response.status,
+      redirectedTo302: response.status >= 300 && response.status < 400,
+      locationHeader,
+      contentType,
+      cacheControl,
+      latencyMs: Date.now() - startedAt,
+      snippet: trimmedBody.slice(0, 320),
+      fullBody: trimmedBody,
+    };
+  } catch (err) {
+    return {
+      path: endpointPath,
+      url,
+      ok: false,
+      status: 0,
+      redirectedTo302: false,
+      locationHeader: null,
+      contentType: '',
+      cacheControl: '',
+      latencyMs: Date.now() - startedAt,
+      snippet: '',
+      fullBody: '',
+      error: err instanceof Error ? err.message : 'Erreur réseau lors du test HTTP.',
+    };
+  }
+}
+
+async function inspectAdSenseTarget(baseUrl: string): Promise<AdSenseTargetReport> {
+  const [homeRaw, adsTxtRaw, robotsRaw, sitemapRaw] = await Promise.all([
+    probeEndpoint(baseUrl, '/'),
+    probeEndpoint(baseUrl, '/ads.txt'),
+    probeEndpoint(baseUrl, '/robots.txt'),
+    probeEndpoint(baseUrl, '/sitemap.xml'),
+  ]);
+
+  const homeHtml = homeRaw.fullBody;
+  const adsTxtBody = adsTxtRaw.fullBody.trim();
+  const robotsBody = robotsRaw.fullBody;
+
+  const metaMatch = homeHtml.match(
+    /<meta[^>]+name=["']google-adsense-account["'][^>]+content=["']([^"']+)["']/i
+  );
+  const scriptMatch = homeHtml.match(
+    /<script[^>]+src=["']https:\/\/pagead2\.googlesyndication\.com\/pagead\/js\/adsbygoogle\.js\?client=([^"'&]+)[^>]*>/i
+  );
+  const canonicalMatch = homeHtml.match(
+    /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i
+  );
+
+  const pubMatches = new Set<string>();
+  for (const m of `${homeHtml}\n${adsTxtBody}`.matchAll(/ca-pub-\d{10,20}|pub-\d{10,20}/g)) {
+    pubMatches.add(m[0]);
+  }
+
+  const detectedMetaClientId = metaMatch?.[1] || null;
+  const detectedScriptClientId = scriptMatch?.[1] || null;
+  const detectedCanonicalUrl = canonicalMatch?.[1] || null;
+
+  const adsTxtMatchesExpected =
+    adsTxtRaw.status === 200 &&
+    adsTxtRaw.contentType.toLowerCase().includes('text/plain') &&
+    adsTxtBody.includes(EXPECTED_ADS_TXT_LINE);
+
+  const hasNo302Redirect =
+    !homeRaw.redirectedTo302 &&
+    !adsTxtRaw.redirectedTo302 &&
+    homeRaw.status === 200 &&
+    adsTxtRaw.status === 200;
+
+  const headMetaValid = detectedMetaClientId === EXPECTED_ADSENSE_CLIENT_ID;
+  const headScriptValid = detectedScriptClientId === EXPECTED_ADSENSE_CLIENT_ID;
+
+  let canonicalMatchesTarget = false;
+  if (detectedCanonicalUrl) {
+    try {
+      const targetHost = new URL(baseUrl).hostname.toLowerCase();
+      const canonicalHost = new URL(detectedCanonicalUrl).hostname.toLowerCase();
+      canonicalMatchesTarget =
+        canonicalHost === targetHost ||
+        (targetHost === '127.0.0.1' && canonicalHost === 'pdfexpress.ai.studio');
+    } catch {
+      canonicalMatchesTarget = false;
+    }
+  }
+
+  const robotsAllowRoot =
+    robotsRaw.status === 200 &&
+    /Allow:\s*\//i.test(robotsBody) &&
+    !/Disallow:\s*\/\s*$/im.test(robotsBody);
+
+  let overallStatus: 'pass' | 'warn' | 'fail' = 'pass';
+  if (!hasNo302Redirect || !adsTxtMatchesExpected || !headMetaValid || !headScriptValid) {
+    overallStatus = 'fail';
+  } else if (!canonicalMatchesTarget || !robotsAllowRoot || !sitemapRaw.ok) {
+    overallStatus = 'warn';
+  }
+
+  const stripBody = <T extends AdSenseEndpointProbe & { fullBody?: string }>({
+    fullBody: _ignored,
+    ...rest
+  }: T): AdSenseEndpointProbe => rest;
+
+  return {
+    baseUrl,
+    checkedAt: new Date().toISOString(),
+    overallStatus,
+    detectedPublisherIds: Array.from(pubMatches),
+    detectedMetaClientId,
+    detectedScriptClientId,
+    detectedCanonicalUrl,
+    adsTxtMatchesExpected,
+    hasNo302Redirect,
+    headMetaValid,
+    headScriptValid,
+    canonicalMatchesTarget,
+    robotsAllowRoot,
+    probes: {
+      home: stripBody(homeRaw),
+      adsTxt: stripBody(adsTxtRaw),
+      robotsTxt: stripBody(robotsRaw),
+      sitemapXml: stripBody(sitemapRaw),
+    },
+  };
+}
+
+app.post('/api/admin/adsense-verify', async (req, res) => {
+  try {
+    const rawTarget =
+      typeof (req.body as { targetUrl?: unknown })?.targetUrl === 'string'
+        ? (req.body as { targetUrl: string }).targetUrl.trim()
+        : CANONICAL_PUBLIC_ORIGIN;
+
+    const normalizedUrl = /^https?:\/\//i.test(rawTarget)
+      ? rawTarget
+      : `https://${rawTarget}`;
+
+    let parsedTarget: URL;
+    try {
+      parsedTarget = new URL(normalizedUrl);
+    } catch {
+      res.status(400).json({ error: 'URL cible invalide.' });
+      return;
+    }
+
+    if (
+      (parsedTarget.protocol !== 'https:' && parsedTarget.protocol !== 'http:') ||
+      !isAllowedAdSenseVerifyHost(parsedTarget.hostname, req)
+    ) {
+      res.status(400).json({
+        error:
+          'Hôte non autorisé pour le diagnostic. Utilisez pdfexpress.ai.studio ou l’hôte courant.',
+      });
+      return;
+    }
+
+    const cleanTargetBase = `${parsedTarget.protocol}//${parsedTarget.host}`;
+    const localBase = `http://127.0.0.1:${PORT}`;
+
+    const [remoteReport, localReport] = await Promise.all([
+      inspectAdSenseTarget(cleanTargetBase),
+      inspectAdSenseTarget(localBase),
+    ]);
+
+    res.json({
+      expectedClientId: EXPECTED_ADSENSE_CLIENT_ID,
+      expectedPubId: EXPECTED_ADSENSE_PUB_ID,
+      expectedAdsTxtLine: EXPECTED_ADS_TXT_LINE,
+      remote: remoteReport,
+      local: localReport,
+    });
+  } catch (err) {
+    console.error('AdSense verify error:', err);
+    res.status(500).json({
+      error:
+        err instanceof Error
+          ? err.message
+          : 'Erreur lors de la vérification Google AdSense.',
+    });
+  }
+});
 
 function escapeXml(str: string): string {
   return str
@@ -635,22 +1046,37 @@ app.get('/sitemap.xml', (req, res) => {
 });
 
 async function startServer() {
+  const httpServer = http.createServer(app);
+
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        ws: false,
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, 'dist');
-    app.use(express.static(distPath));
+    app.use(
+      express.static(distPath, {
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          }
+        },
+      })
+    );
     app.get('*', (_req, res) => {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`PDFExpress server running on http://localhost:${PORT}`);
   });
 }

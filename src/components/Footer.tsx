@@ -17,6 +17,9 @@ interface FooterProps {
   onNavigateSection: (sectionId: string) => void;
   onOpenInfoPage: (pageId: string) => void;
   onOpenPremium: () => void;
+  onOpenPricing?: () => void;
+  onOpenDocs?: () => void;
+  onOpenAdSenseTester?: () => void;
 }
 
 export function Footer({
@@ -28,8 +31,12 @@ export function Footer({
   onNavigateSection,
   onOpenInfoPage,
   onOpenPremium,
+  onOpenPricing,
+  onOpenDocs,
+  onOpenAdSenseTester,
 }: FooterProps) {
   const handleAction = (action: FooterAction) => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     if (action.type === 'home') {
       onGoHome();
     } else if (action.type === 'tool') {
@@ -42,6 +49,8 @@ export function Footer({
       onNavigateSection(action.elementId);
     } else if (action.type === 'premium') {
       onOpenPremium();
+    } else if (action.type === 'pricing') {
+      onOpenPricing?.();
     }
   };
 
@@ -83,6 +92,15 @@ export function Footer({
                   {sec.label}
                 </button>
               ))}
+              {onOpenDocs && (
+                <button
+                  type="button"
+                  onClick={onOpenDocs}
+                  className="text-brand-red hover:text-red-400 font-bold underline underline-offset-4 transition-colors"
+                >
+                  📚 Documentation des 34 outils
+                </button>
+              )}
             </div>
           </div>
 
@@ -142,7 +160,7 @@ export function Footer({
                     <button
                       type="button"
                       onClick={() => handleAction(link.action)}
-                      className="text-neutral-400 hover:text-white transition-colors text-left"
+                      className="text-neutral-400 hover:text-white transition-colors duration-200 text-left"
                     >
                       {link.label}
                     </button>
@@ -227,6 +245,15 @@ export function Footer({
                   {legal.label}
                 </button>
               ))}
+              {onOpenAdSenseTester && (
+                <button
+                  type="button"
+                  onClick={onOpenAdSenseTester}
+                  className="hover:text-white transition-colors cursor-pointer"
+                >
+                  Test AdSense
+                </button>
+              )}
             </div>
           </div>
 

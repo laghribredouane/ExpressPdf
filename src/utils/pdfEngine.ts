@@ -155,6 +155,80 @@ export async function createFormattedTextPdf(
   return pdfDoc;
 }
 
+function createStampPngBytes(options: ExecutionOptions): Promise<ArrayBuffer> {
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 400;
+    canvas.height = 400;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      resolve(new ArrayBuffer(0));
+      return;
+    }
+    const shape = options.stampShape || 'circle';
+    const color = options.stampColor || 'red';
+    const textTop = options.stampTextTop || 'REPUBLIQUE FRANCAISE';
+    const textCenter = options.stampCenterText || 'DIRECTION FINANCIERE';
+    const textBottom = options.stampTextBottom || new Date().toLocaleDateString('fr-FR');
+    const opacity = (options.stampOpacity ?? 90) / 100;
+
+    ctx.clearRect(0, 0, 400, 400);
+    ctx.globalAlpha = opacity;
+
+    const hexColor =
+      color === 'blue'
+        ? '#1d4ed8'
+        : color === 'green'
+        ? '#15803d'
+        : color === 'black'
+        ? '#171717'
+        : color === 'purple'
+        ? '#7e22ce'
+        : '#dc2626';
+
+    ctx.strokeStyle = hexColor;
+    ctx.fillStyle = hexColor;
+    ctx.lineWidth = 6;
+
+    if (shape === 'rectangle') {
+      ctx.beginPath();
+      ctx.roundRect(20, 70, 360, 260, 20);
+      ctx.stroke();
+    } else if (shape === 'badge') {
+      ctx.beginPath();
+      ctx.roundRect(20, 70, 360, 260, 20);
+      ctx.stroke();
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(32, 82, 336, 236, 12);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.arc(200, 200, 180, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.font = 'bold 20px Helvetica, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(textTop.toUpperCase(), 200, shape === 'circle' ? 120 : 130);
+
+    ctx.font = 'bold 26px Helvetica, Arial, sans-serif';
+    ctx.fillText(textCenter.toUpperCase(), 200, 200);
+
+    ctx.font = 'bold 18px Helvetica, Arial, sans-serif';
+    ctx.fillText(textBottom, 200, shape === 'circle' ? 280 : 270);
+
+    canvas.toBlob(async (blob) => {
+      if (!blob) {
+        resolve(new ArrayBuffer(0));
+        return;
+      }
+      resolve(await blob.arrayBuffer());
+    }, 'image/png');
+  });
+}
+
 export function applyImageScanFilter(
   dataUrl: string,
   blackAndWhite: boolean
@@ -567,10 +641,18 @@ export async function executePdfTool(
       fileName = `extrait_${files[0].name}`;
     }
   } else if (toolId === 'organizepages') {
-    const src = await PDFDocument.load(files[0].arrayBuffer, { ignoreEncryption: true });
+    if (files.length === 0) {
+      throw new Error('Aucun fichier PDF chargé.');
+    }
+    const loadedDocs = await Promise.all(
+      files.map((f) => PDFDocument.load(f.arrayBuffer, { ignoreEncryption: true }))
+    );
     const out = await PDFDocument.create();
     for (const item of pageOrder) {
-      const [p] = await out.copyPages(src, [item.originalIndex]);
+      const fIdx = item.fileIndex ?? 0;
+      const srcDoc = loadedDocs[fIdx];
+      if (!srcDoc) continue;
+      const [p] = await out.copyPages(srcDoc, [item.originalIndex]);
       if (item.rotation) {
         p.setRotation(degrees((p.getRotation().angle + item.rotation) % 360));
       }
@@ -578,7 +660,10 @@ export async function executePdfTool(
     }
     const bytes = await out.save();
     blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
-    fileName = `organise_${files[0].name}`;
+    fileName =
+      files.length > 1
+        ? `organise_${files[0].name.replace(/\.pdf$/i, '')}_combine.pdf`
+        : `organise_${files[0].name}`;
   } else if (toolId === 'scan2pdf') {
     if (scannedImages.length === 0) {
       throw new Error('Capturez ou importez au moins une page.');
@@ -1337,6 +1422,48 @@ export async function executePdfTool(
     blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
     fileName = `flux_pdfexpress_${files[0].name}`;
     statsHtml = `Flux exécuté avec succès : <strong>${steps.length} étape(s)</strong> appliquée(s) sur <strong>${files.length} fichier(s)</strong>.`;
+  } else if (toolId === 'stampgenerator') {
+    const pdfDoc = await PDFDocument.load(files[0].arrayBuffer, {
+      ignoreEncryption: true,
+    });
+    const stampBytes = await createStampPngBytes(options);
+    const stampImage = await pdfDoc.embedPng(stampBytes);
+    const pages = pdfDoc.getPages();
+    const mode = options.stampPageMode || 'all';
+    const pos = options.stampPosition || 'br';
+
+    pages.forEach((page, idx) => {
+      if (mode === 'first' && idx !== 0) return;
+      if (mode === 'last' && idx !== pages.length - 1) return;
+
+      const { width, height } = page.getSize();
+      const sw = 140;
+      const sh = 140;
+      const margin = 36;
+      let x = width - sw - margin;
+      let y = margin;
+
+      if (pos === 'bl') {
+        x = margin;
+        y = margin;
+      } else if (pos === 'tl') {
+        x = margin;
+        y = height - sh - margin;
+      } else if (pos === 'tr') {
+        x = width - sw - margin;
+        y = height - sh - margin;
+      } else if (pos === 'center') {
+        x = (width - sw) / 2;
+        y = (height - sh) / 2;
+      }
+
+      page.drawImage(stampImage, { x, y, width: sw, height: sh });
+    });
+
+    const bytes = await pdfDoc.save();
+    blob = new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+    fileName = `cachete_${files[0].name}`;
+    statsHtml = `Cachet officiel appliqué avec succès sur le document.`;
   } else {
     throw new Error('Outil non reconnu.');
   }

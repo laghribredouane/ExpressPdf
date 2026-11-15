@@ -24,6 +24,7 @@ import {
   type AdminDashboardSnapshot,
 } from '../services/saasService';
 import type { SubscriptionStatus } from '../types/pdf';
+import { AdSenseDiagnosticPanel } from './AdSenseDiagnosticPanel';
 
 interface AdminDashboardViewProps {
   isAdmin: boolean;
@@ -32,7 +33,7 @@ interface AdminDashboardViewProps {
   onNotify: (msg: string, type?: 'info' | 'success' | 'error') => void;
 }
 
-type AdminTab = 'requests' | 'users' | 'devices';
+type AdminTab = 'requests' | 'users' | 'devices' | 'adsense';
 
 function StatusBadge({ status }: { status: SubscriptionStatus }) {
   const styles: Record<SubscriptionStatus, string> = {
@@ -410,9 +411,20 @@ export function AdminDashboardView({
           >
             Appareils &amp; Anti-Abus ({data.devices.length})
           </button>
+          <button
+            type="button"
+            onClick={() => setTab('adsense')}
+            className={`min-h-[40px] px-3.5 py-2 rounded-lg text-xs font-extrabold whitespace-nowrap shrink-0 transition-all ${
+              tab === 'adsense'
+                ? 'bg-white dark:bg-neutral-900 text-brand-red shadow-xs'
+                : 'text-neutral-600 dark:text-neutral-300'
+            }`}
+          >
+            Liaison AdSense
+          </button>
         </div>
 
-        {tab !== 'requests' && (
+        {(tab === 'users' || tab === 'devices') && (
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative w-full sm:w-64">
               <Search className="w-4 h-4 text-neutral-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -767,6 +779,9 @@ export function AdminDashboardView({
           </table>
         </div>
       )}
+
+      {/* Tab 4: Diagnostic Google AdSense */}
+      {tab === 'adsense' && <AdSenseDiagnosticPanel onNotify={onNotify} />}
     </main>
   );
 }

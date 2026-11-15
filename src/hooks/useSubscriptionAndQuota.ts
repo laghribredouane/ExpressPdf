@@ -313,17 +313,20 @@ export function useSubscriptionAndQuota({
         };
       }
 
-      if (files.length > maxBatchFiles) {
+      const effectiveMaxBatch =
+        tool?.id === 'organizepages' ? Math.max(maxBatchFiles, 15) : maxBatchFiles;
+
+      if (files.length > effectiveMaxBatch) {
         return {
           allowed: false,
           blockReasonCode: 'batch_limit',
           requiresAuth: isGuest,
           requiresUpgrade: true,
           reason: isGuest
-            ? `Les visiteurs peuvent traiter au maximum ${maxBatchFiles} fichiers simultanément. Créez un compte gratuit pour débloquer 7 jours illimités !`
-            : `Le plan Gratuit est limité à ${maxBatchFiles} fichiers par traitement. Passez à Premium pour traiter des lots illimités.`,
+            ? `Les visiteurs peuvent traiter au maximum ${effectiveMaxBatch} fichiers simultanément. Créez un compte gratuit pour débloquer 7 jours illimités !`
+            : `Le plan Gratuit est limité à ${effectiveMaxBatch} fichiers par traitement. Passez à Premium pour traiter des lots illimités.`,
           maxFileMb,
-          maxBatchFiles,
+          maxBatchFiles: effectiveMaxBatch,
           dailyLimit,
           remainingTasks,
           isWatermarked: true,
