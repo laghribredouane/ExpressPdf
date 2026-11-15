@@ -1,18 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Bug,
   CheckCircle2,
   Eye,
+  FileCode2,
+  Loader2,
   PauseCircle,
   PlayCircle,
   RefreshCw,
   Ruler,
+  Trash2,
   X,
 } from 'lucide-react';
 import {
+  ADSENSE_SCRIPT_ATTR,
+  type AdSenseConsoleErrorEntry,
   type AdSensePlacement,
+  clearAdSenseErrors,
   getAdSenseClientId,
+  getAdSenseErrors,
   getAdSenseSlotId,
+  isGoogleSyndicationOrPageAdError,
+  subscribeAdSenseErrors,
 } from '../utils/adsense';
 
 interface AdSenseTesterProps {
@@ -31,15 +41,19 @@ interface DomSlotEntry {
 interface TesterState {
   pauseAdRequests: number | undefined;
   adFreeStorage: string | null;
+  readyState: DocumentReadyState | 'unknown';
   scriptPresent: boolean;
   scriptLoaded: boolean;
   scriptErrored: boolean;
+  injectedByUtility: boolean;
+  handledByUtility: boolean;
   adsByGoogleLoaded: boolean;
   runtimeHooked: boolean;
   clientId: string;
   hostname: string;
   slots: Record<AdSensePlacement, string>;
   domSlots: DomSlotEntry[];
+  adErrors: AdSenseConsoleErrorEntry[];
 }
 
 function readTesterState(): TesterState {
@@ -47,9 +61,12 @@ function readTesterState(): TesterState {
     return {
       pauseAdRequests: undefined,
       adFreeStorage: null,
+      readyState: 'unknown',
       scriptPresent: false,
       scriptLoaded: false,
       scriptErrored: false,
+      injectedByUtility: false,
+      handledByUtility: false,
       adsByGoogleLoaded: false,
       runtimeHooked: false,
       clientId: getAdSenseClientId(),
@@ -60,6 +77,7 @@ function readTesterState(): TesterState {
         result: getAdSenseSlotId('result'),
       },
       domSlots: [],
+      adErrors: [],
     };
   }
 
@@ -71,8 +89,13 @@ function readTesterState(): TesterState {
   }
 
   const scriptEl = document.querySelector<HTMLScriptElement>(
-    'script[src*="pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]'
+    `script[${ADSENSE_SCRIPT_ATTR}="true"], script[src*="pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"]`
   );
+
+  const injectedByUtility =
+    scriptEl?.getAttribute(ADSENSE_SCRIPT_ATTR) === 'true';
+  const handledByUtility =
+    injectedByUtility || scriptEl?.dataset.pdfexpressHandled === 'true';
 
   const runtimeHooked = Boolean(
     window.adsbygoogle && window.adsbygoogle.push !== Array.prototype.push
@@ -94,12 +117,15 @@ function readTesterState(): TesterState {
   return {
     pauseAdRequests: window.adsbygoogle?.pauseAdRequests,
     adFreeStorage,
+    readyState: document.readyState,
     scriptPresent: Boolean(scriptEl),
     scriptLoaded:
       scriptEl?.dataset.loaded === 'true' ||
       Boolean(window.adsbygoogle?.loaded) ||
       runtimeHooked,
     scriptErrored: scriptEl?.dataset.errored === 'true',
+    injectedByUtility,
+    handledByUtility,
     adsByGoogleLoaded: Boolean(window.adsbygoogle?.loaded) || runtimeHooked,
     runtimeHooked,
     clientId: getAdSenseClientId(),
@@ -110,6 +136,7 @@ function readTesterState(): TesterState {
       result: getAdSenseSlotId('result'),
     },
     domSlots,
+    adErrors: getAdSenseErrors(),
   };
 }
 
@@ -119,6 +146,10 @@ export function AdSenseTester({
   isAdFree,
 }: AdSenseTesterProps) {
   const [state, setState] = useState<TesterState>(() => readTesterState());
+  const [errorFilterMode, setErrorFilterMode] = useState<'domains' | 'all'>(
+    'domains'
+  );
+  const [lastSyncedAt, setLastSyncedAt] = useState<number>(() => Date.now());
   const [previewPlacement, setPreviewPlacement] =
     useState<AdSensePlacement>('home');
   const [simulateEmptySlot, setSimulateEmptySlot] = useState(true);
@@ -131,11 +162,25 @@ export function AdSenseTester({
 
   const refreshState = useCallback(() => {
     setState(readTesterState());
+    setLastSyncedAt(Date.now());
   }, []);
 
   useEffect(() => {
     if (!isOpen) return;
     refreshState();
+
+    const handleReadyStateChange = () => {
+      refreshState();
+    };
+    document.addEventListener('readystatechange', handleReadyStateChange);
+    const unsubscribeErrors = subscribeAdSenseErrors(refreshState);
+    const timer = window.setInterval(refreshState, 1000);
+
+    return () => {
+      document.removeEventListener('readystatechange', handleReadyStateChange);
+      unsubscribeErrors();
+      window.clearInterval(timer);
+    };
   }, [isOpen, isAdFree, refreshState]);
 
   useEffect(() => {
@@ -169,6 +214,11 @@ export function AdSenseTester({
   const isPreviewHost =
     state.hostname !== 'pdfexpress.ai.studio' &&
     state.hostname !== 'www.pdfexpress.ai.studio';
+  const domainFilteredErrors = state.adErrors.filter(
+    isGoogleSyndicationOrPageAdError
+  );
+  const visibleErrors =
+    errorFilterMode === 'domains' ? domainFilteredErrors : state.adErrors;
 
   return (
     <div
@@ -257,6 +307,213 @@ export function AdSenseTester({
                   : 'Supprimé du DOM'}
               </p>
             </div>
+          </div>
+
+          {/* Precise Loading, Utility Injection & window.onerror Indicators */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-900/50 p-3.5 space-y-1">
+              <span className="text-[11px] font-semibold text-neutral-500 dark:text-neutral-400">
+                Chargement document (readyState)
+              </span>
+              <div className="flex items-center gap-2 pt-0.5">
+                {state.readyState === 'complete' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                ) : (
+                  <Loader2 className="w-4 h-4 text-amber-600 dark:text-amber-400 animate-spin shrink-0" />
+                )}
+                <span className="font-mono text-xs font-bold text-neutral-900 dark:text-white">
+                  {state.readyState === 'complete'
+                    ? 'complete (DOM & ressources prêts)'
+                    : state.readyState === 'interactive'
+                    ? 'interactive (DOM prêt, ressources en cours)'
+                    : state.readyState === 'loading'
+                    ? 'loading (Analyse HTML en cours)'
+                    : state.readyState}
+                </span>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-900/50 p-3.5 space-y-1">
+              <span className="text-[11px] font-semibold text-neutral-500 dark:text-neutral-400">
+                Injection via notre utilitaire
+              </span>
+              <div className="flex items-start gap-2 pt-0.5">
+                <FileCode2
+                  className={`w-4 h-4 shrink-0 mt-0.5 ${
+                    state.injectedByUtility
+                      ? 'text-emerald-600 dark:text-emerald-400'
+                      : state.scriptPresent
+                      ? 'text-sky-600 dark:text-sky-400'
+                      : 'text-neutral-400'
+                  }`}
+                />
+                <div className="font-mono text-xs font-bold text-neutral-900 dark:text-white leading-snug">
+                  {state.injectedByUtility
+                    ? 'Oui (injecté dynamiquement)'
+                    : state.scriptPresent
+                    ? state.handledByUtility
+                      ? 'Non (balise <head> gérée par utilitaire)'
+                      : 'Non (balise statique <head>)'
+                    : 'Non (aucun script dans le DOM)'}
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/70 dark:bg-neutral-900/50 p-3.5 space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold text-neutral-500 dark:text-neutral-400">
+                  Erreurs googlesyndication / pagead
+                </span>
+                {state.adErrors.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => clearAdSenseErrors()}
+                    className="inline-flex items-center gap-1 text-[10px] font-semibold text-neutral-500 hover:text-brand-red cursor-pointer"
+                    title="Effacer les erreurs enregistrées"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Effacer</span>
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-2 pt-0.5">
+                <Bug
+                  className={`w-4 h-4 shrink-0 ${
+                    domainFilteredErrors.length > 0
+                      ? 'text-red-600 dark:text-red-400'
+                      : state.adErrors.length > 0
+                      ? 'text-amber-600 dark:text-amber-400'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                  }`}
+                />
+                <span
+                  className={`font-mono tabular-nums text-xs font-bold ${
+                    domainFilteredErrors.length > 0
+                      ? 'text-red-700 dark:text-red-400'
+                      : 'text-neutral-900 dark:text-white'
+                  }`}
+                >
+                  {domainFilteredErrors.length === 0
+                    ? state.adErrors.length === 0
+                      ? '0 erreur (window.onerror sain)'
+                      : `0 domaine · ${state.adErrors.length} autre(s)`
+                    : `${domainFilteredErrors.length} erreur${
+                        domainFilteredErrors.length > 1 ? 's' : ''
+                      } domaine (${state.adErrors.length} total)`}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Real-time window.__pdfexpressAdSenseErrorLog Monitor */}
+          <div
+            className={`rounded-xl border p-3.5 space-y-2.5 text-xs ${
+              domainFilteredErrors.length > 0
+                ? 'border-red-200 dark:border-red-900/60 bg-red-50/70 dark:bg-red-950/30'
+                : 'border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/40'
+            }`}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Bug
+                  className={`w-4 h-4 shrink-0 ${
+                    domainFilteredErrors.length > 0
+                      ? 'text-red-600 dark:text-red-400'
+                      : 'text-emerald-600 dark:text-emerald-400'
+                  }`}
+                />
+                <span
+                  className={`font-bold ${
+                    domainFilteredErrors.length > 0
+                      ? 'text-red-800 dark:text-red-300'
+                      : 'text-neutral-900 dark:text-white'
+                  }`}
+                >
+                  Flux temps réel window.__pdfexpressAdSenseErrorLog
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 font-mono tabular-nums text-[10px] text-neutral-500 dark:text-neutral-400 mr-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                  <span>
+                    {new Date(lastSyncedAt).toLocaleTimeString('fr-FR')}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setErrorFilterMode('domains')}
+                  className={`px-2 py-1 rounded-md font-mono text-[11px] font-bold transition-colors cursor-pointer ${
+                    errorFilterMode === 'domains'
+                      ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-900'
+                      : 'bg-white/80 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700'
+                  }`}
+                >
+                  googlesyndication / pagead ({domainFilteredErrors.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setErrorFilterMode('all')}
+                  className={`px-2 py-1 rounded-md font-mono text-[11px] font-bold transition-colors cursor-pointer ${
+                    errorFilterMode === 'all'
+                      ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-900'
+                      : 'bg-white/80 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300 border border-neutral-200 dark:border-neutral-700'
+                  }`}
+                >
+                  Tous ({state.adErrors.length})
+                </button>
+                {state.adErrors.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => clearAdSenseErrors()}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold text-neutral-600 dark:text-neutral-300 hover:text-brand-red border border-neutral-200 dark:border-neutral-700 bg-white/80 dark:bg-neutral-800 cursor-pointer"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    <span>Vider</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {visibleErrors.length === 0 ? (
+              <p className="font-mono text-[11px] text-neutral-500 dark:text-neutral-400">
+                {errorFilterMode === 'domains'
+                  ? 'Aucune erreur capturée dans window.__pdfexpressAdSenseErrorLog pour les domaines googlesyndication ou pagead.'
+                  : 'Aucune erreur enregistrée dans window.__pdfexpressAdSenseErrorLog.'}
+              </p>
+            ) : (
+              <ul className="space-y-1.5 max-h-40 overflow-y-auto font-mono text-[11px]">
+                {visibleErrors.map((err) => {
+                  const matchesDomain = isGoogleSyndicationOrPageAdError(err);
+                  return (
+                    <li
+                      key={err.id}
+                      className="rounded-lg bg-white/90 dark:bg-neutral-900/80 border border-red-200/80 dark:border-red-900/50 px-2.5 py-1.5 text-red-900 dark:text-red-200 break-words"
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-bold">[{err.source}]</span>
+                        <span className="text-neutral-500 dark:text-neutral-400 tabular-nums">
+                          {new Date(err.timestamp).toLocaleTimeString('fr-FR')}
+                        </span>
+                        {matchesDomain && (
+                          <span className="px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950 text-red-700 dark:text-red-300 text-[10px] font-bold">
+                            googlesyndication/pagead
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5">{err.message}</p>
+                      {err.filename && (
+                        <span className="block text-[10px] text-neutral-600 dark:text-neutral-400 mt-0.5">
+                          {err.filename}
+                          {typeof err.lineno === 'number' ? `:${err.lineno}` : ''}
+                          {typeof err.colno === 'number' ? `:${err.colno}` : ''}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
 
           {/* Live DOM <ins> Diagnostic */}

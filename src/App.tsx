@@ -13,11 +13,16 @@ import { AdSenseTester } from './components/AdSenseTester';
 import { AboutView } from './components/AboutView';
 import { AIChatAssistant } from './components/AIChatAssistant';
 import { ContactView } from './components/ContactView';
+import { CookieConsentBanner } from './components/CookieConsentBanner';
 import { FaqView } from './components/FaqView';
 import { AuthModal, type AuthModalMode } from './components/AuthModal';
 import { Footer } from './components/Footer';
 import { HomeView } from './components/HomeView';
 import { InfoModal } from './components/InfoModal';
+import {
+  LegalPagesView,
+  type LegalPageKey,
+} from './components/LegalPagesView';
 import { Navbar } from './components/Navbar';
 import { ToolDocumentationModal } from './components/ToolDocumentationModal';
 import { OfflineIndicator } from './components/OfflineIndicator';
@@ -51,6 +56,10 @@ import {
   removeAdSenseFromDocument,
 } from './utils/adsense';
 import {
+  applyCookieConsentToAdSense,
+  readCookieConsent,
+} from './utils/cookieConsent';
+import {
   clearCloudHistory,
   deleteCloudHistoryEntry,
   ensureUserProfileDocs,
@@ -73,15 +82,75 @@ import type {
 const RECENT_CACHE_KEY = 'pdfexpress-recent-files';
 const PREMIUM_TRANSFER_KEY = 'pdfexpress-premium-transfer';
 
-type AppPage = 'main' | 'tarifs' | 'admin' | 'about' | 'contact' | 'faq';
+type AppPage =
+  | 'main'
+  | 'tarifs'
+  | 'admin'
+  | 'about'
+  | 'contact'
+  | 'faq'
+  | LegalPageKey;
+
+const PAGE_PATH_MAP: Record<AppPage, string> = {
+  main: '/',
+  tarifs: '/tarifs',
+  admin: '/admin',
+  about: '/about',
+  contact: '/contact',
+  faq: '/faq',
+  privacy: '/confidentialite',
+  terms: '/conditions',
+  cookies: '/cookies',
+  security: '/securite',
+  accessibility: '/accessibilite',
+  legal: '/mentions-legales',
+  sitemap: '/plan-du-site',
+};
+
+const INFO_PAGE_ROUTE_MAP: Record<string, AppPage> = {
+  about: 'about',
+  contact: 'contact',
+  faq: 'faq',
+  privacy: 'privacy',
+  terms: 'terms',
+  cookies: 'cookies',
+  security: 'security',
+  accessibility: 'accessibility',
+  sitemap: 'sitemap',
+  legal_compliance: 'legal',
+  legal: 'legal',
+};
 
 function getPageFromPathname(pathname: string): AppPage {
   const normalized = pathname.toLowerCase();
   if (normalized.startsWith('/tarifs')) return 'tarifs';
   if (normalized.startsWith('/admin')) return 'admin';
-  if (normalized.startsWith('/about')) return 'about';
+  if (normalized.startsWith('/about') || normalized.startsWith('/a-propos'))
+    return 'about';
   if (normalized.startsWith('/contact')) return 'contact';
   if (normalized.startsWith('/faq')) return 'faq';
+  if (
+    normalized.startsWith('/confidentialite') ||
+    normalized.startsWith('/privacy')
+  )
+    return 'privacy';
+  if (normalized.startsWith('/conditions') || normalized.startsWith('/terms'))
+    return 'terms';
+  if (normalized.startsWith('/cookies')) return 'cookies';
+  if (normalized.startsWith('/securite') || normalized.startsWith('/security'))
+    return 'security';
+  if (
+    normalized.startsWith('/accessibilite') ||
+    normalized.startsWith('/accessibility')
+  )
+    return 'accessibility';
+  if (
+    normalized.startsWith('/mentions-legales') ||
+    normalized.startsWith('/legal')
+  )
+    return 'legal';
+  if (normalized.startsWith('/plan-du-site') || normalized.startsWith('/sitemap'))
+    return 'sitemap';
   return 'main';
 }
 
@@ -241,6 +310,56 @@ export default function App() {
       pageDesc = 'Panneau de gestion des comptes et abonnements PDFExpress.';
       canonicalPath = '/admin';
       robotsContent = 'noindex, nofollow';
+    } else if (activePage === 'about') {
+      pageTitle = 'À propos de PDFExpress – Notre mission & technologie';
+      pageDesc =
+        'Découvrez l’équipe et l’architecture locale sécurisée derrière la suite de 34 outils PDF gratuits PDFExpress.';
+      canonicalPath = '/about';
+    } else if (activePage === 'contact') {
+      pageTitle = 'Contact & Support – PDFExpress';
+      pageDesc =
+        'Contactez l’équipe PDFExpress pour toute question technique, demande entreprise ou réclamation relative à vos données.';
+      canonicalPath = '/contact';
+    } else if (activePage === 'faq') {
+      pageTitle = 'Foire aux questions (FAQ) – PDFExpress';
+      pageDesc =
+        'Réponses aux questions fréquentes sur le fonctionnement local, la confidentialité, les formats et les offres PDFExpress.';
+      canonicalPath = '/faq';
+    } else if (activePage === 'privacy') {
+      pageTitle = 'Politique de confidentialité – PDFExpress';
+      pageDesc =
+        'Comment PDFExpress protège vos documents PDF en local et gère la conformité RGPD et Google AdSense.';
+      canonicalPath = '/confidentialite';
+    } else if (activePage === 'terms') {
+      pageTitle = 'Conditions générales d’utilisation – PDFExpress';
+      pageDesc =
+        'Conditions générales d’utilisation des outils PDF gratuits, quotas et abonnements Premium sur pdfexpress.ai.studio.';
+      canonicalPath = '/conditions';
+    } else if (activePage === 'cookies') {
+      pageTitle = 'Politique de cookies & Consentement – PDFExpress';
+      pageDesc =
+        'Informations et contrôle des traceurs fonctionnels et cookies publicitaires Google AdSense sur PDFExpress.';
+      canonicalPath = '/cookies';
+    } else if (activePage === 'security') {
+      pageTitle = 'Sécurité des données & Zero-Upload – PDFExpress';
+      pageDesc =
+        'Découvrez le traitement local en mémoire vive, le chiffrement TLS et les garanties de sécurité de PDFExpress.';
+      canonicalPath = '/securite';
+    } else if (activePage === 'accessibility') {
+      pageTitle = 'Accessibilité numérique (WCAG 2.1 AA) – PDFExpress';
+      pageDesc =
+        'Engagements de PDFExpress pour la navigation clavier, les lecteurs d’écran et les contrastes WCAG.';
+      canonicalPath = '/accessibilite';
+    } else if (activePage === 'legal') {
+      pageTitle = 'Mentions légales & Conformité – PDFExpress';
+      pageDesc =
+        'Informations officielles sur l’éditeur, l’hébergement Cloud Run et la transparence publicitaire de pdfexpress.ai.studio.';
+      canonicalPath = '/mentions-legales';
+    } else if (activePage === 'sitemap') {
+      pageTitle = 'Plan du site – Tous les outils et pages PDFExpress';
+      pageDesc =
+        'Accès structuré à toutes les pages légales, informatives et aux 34 outils PDF de PDFExpress.';
+      canonicalPath = '/plan-du-site';
     } else if (currentTool) {
       pageTitle = `${currentTool.title} en ligne gratuit – PDFExpress`;
       pageDesc = currentTool.desc;
@@ -294,23 +413,19 @@ export default function App() {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
+  useEffect(() => {
+    const existingConsent = readCookieConsent();
+    if (existingConsent) {
+      applyCookieConsentToAdSense(existingConsent.choice);
+    }
+  }, []);
+
   const navigateToPage = useCallback((page: AppPage) => {
     setActivePage(page);
     if (page !== 'main') {
       setCurrentToolId(null);
     }
-    const targetPath =
-      page === 'tarifs'
-        ? '/tarifs'
-        : page === 'admin'
-        ? '/admin'
-        : page === 'about'
-        ? '/about'
-        : page === 'contact'
-        ? '/contact'
-        : page === 'faq'
-        ? '/faq'
-        : '/';
+    const targetPath = PAGE_PATH_MAP[page] || '/';
     if (
       window.location.pathname !== targetPath ||
       (page === 'main' && window.location.search)
@@ -319,6 +434,18 @@ export default function App() {
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
+
+  const handleOpenInfoOrLegalPage = useCallback(
+    (pageId: string) => {
+      const targetPage = INFO_PAGE_ROUTE_MAP[pageId];
+      if (targetPage) {
+        navigateToPage(targetPage);
+      } else {
+        setActiveInfoPageId(pageId);
+      }
+    },
+    [navigateToPage]
+  );
 
   const notify = useCallback(
     (message: string, type: 'info' | 'success' | 'error' = 'info') => {
@@ -912,13 +1039,7 @@ export default function App() {
         onSelectTool={handleSelectTool}
         onSelectCategory={handleSelectCategory}
         onNavigateSection={handleNavigateSection}
-        onOpenInfoPage={(pageId) => {
-          if (pageId === 'about' || pageId === 'contact' || pageId === 'faq') {
-            navigateToPage(pageId as AppPage);
-          } else {
-            setActiveInfoPageId(pageId);
-          }
-        }}
+        onOpenInfoPage={handleOpenInfoOrLegalPage}
         onOpenPremium={() => {
           setPremiumInitialPlan('premium_pro');
           setPremiumInitialCycle('annual');
@@ -1124,6 +1245,26 @@ export default function App() {
         <ContactView onBackHome={handleGoHome} onNotify={notify} />
       ) : activePage === 'faq' ? (
         <FaqView onBackHome={handleGoHome} />
+      ) : activePage === 'privacy' ||
+        activePage === 'terms' ||
+        activePage === 'cookies' ||
+        activePage === 'security' ||
+        activePage === 'accessibility' ||
+        activePage === 'legal' ||
+        activePage === 'sitemap' ? (
+        <LegalPagesView
+          page={activePage}
+          onNavigateLegal={(legalPage) => navigateToPage(legalPage)}
+          onNavigateRoute={(routePath) => {
+            if (routePath === '/about') navigateToPage('about');
+            else if (routePath === '/contact') navigateToPage('contact');
+            else if (routePath === '/faq') navigateToPage('faq');
+            else if (routePath === '/tarifs') navigateToPage('tarifs');
+          }}
+          onSelectTool={handleSelectTool}
+          onBackHome={handleGoHome}
+          onNotify={notify}
+        />
       ) : currentTool ? (
         <WorkspaceView
           tool={currentTool}
@@ -1178,7 +1319,7 @@ export default function App() {
             setSearchQuery('');
           }}
           onSelectTool={handleSelectTool}
-          onOpenInfoPage={(pageId) => setActiveInfoPageId(pageId)}
+          onOpenInfoPage={handleOpenInfoOrLegalPage}
           selectedCurrency={selectedCurrency}
           onCurrencyChange={setSelectedCurrency}
           onOpenPremium={() => {
@@ -1199,7 +1340,7 @@ export default function App() {
         onSelectTool={handleSelectTool}
         onSelectCategory={handleSelectCategory}
         onNavigateSection={handleNavigateSection}
-        onOpenInfoPage={(pageId) => setActiveInfoPageId(pageId)}
+        onOpenInfoPage={handleOpenInfoOrLegalPage}
         onOpenPremium={() => {
           setPremiumInitialPlan('premium_pro');
           setPremiumInitialCycle('annual');
@@ -1208,6 +1349,12 @@ export default function App() {
         onOpenPricing={() => navigateToPage('tarifs')}
         onOpenDocs={() => setDocsModalOpen(true)}
         onOpenAdSenseTester={() => setAdsenseTesterOpen(true)}
+      />
+
+      <CookieConsentBanner
+        onOpenCookiesPage={() => navigateToPage('cookies')}
+        onOpenPrivacyPage={() => navigateToPage('privacy')}
+        isAdFree={isAdFree}
       />
 
       <AdSenseTester

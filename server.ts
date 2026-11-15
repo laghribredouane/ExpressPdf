@@ -1023,6 +1023,16 @@ app.get('/sitemap.xml', (req, res) => {
   const entries = [
     { loc: `${baseUrl}/`, changefreq: 'daily', priority: '1.0' },
     { loc: `${baseUrl}/tarifs`, changefreq: 'weekly', priority: '0.8' },
+    { loc: `${baseUrl}/about`, changefreq: 'monthly', priority: '0.7' },
+    { loc: `${baseUrl}/contact`, changefreq: 'monthly', priority: '0.7' },
+    { loc: `${baseUrl}/faq`, changefreq: 'weekly', priority: '0.7' },
+    { loc: `${baseUrl}/confidentialite`, changefreq: 'monthly', priority: '0.6' },
+    { loc: `${baseUrl}/conditions`, changefreq: 'monthly', priority: '0.6' },
+    { loc: `${baseUrl}/cookies`, changefreq: 'monthly', priority: '0.6' },
+    { loc: `${baseUrl}/securite`, changefreq: 'monthly', priority: '0.6' },
+    { loc: `${baseUrl}/accessibilite`, changefreq: 'monthly', priority: '0.5' },
+    { loc: `${baseUrl}/mentions-legales`, changefreq: 'monthly', priority: '0.5' },
+    { loc: `${baseUrl}/plan-du-site`, changefreq: 'weekly', priority: '0.6' },
     ...toolIds.map((id) => ({
       loc: `${baseUrl}/?tool=${encodeURIComponent(id)}`,
       changefreq: 'weekly',

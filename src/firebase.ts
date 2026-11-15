@@ -12,7 +12,7 @@ import {
   type User,
 } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
+import firebaseConfig from '../firebase-applet-config.json' with { type: 'json' };
 import { assertNonDisposableEmail } from './utils/disposableEmails';
 
 export const WORKSPACE_SCOPES = [

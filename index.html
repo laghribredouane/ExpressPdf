@@ -76,12 +76,38 @@
         if (localStorage.getItem('pdfexpress_ad_free') === '1') {
           window.adsbygoogle.pauseAdRequests = 1;
         }
+        window.__pdfexpressAdSenseErrorLog = window.__pdfexpressAdSenseErrorLog || [];
+        var prevOnError = window.onerror;
+        window.onerror = function (message, source, lineno, colno, error) {
+          try {
+            var text = [
+              String(message || ''),
+              String(source || ''),
+              error && error.stack ? String(error.stack) : '',
+            ].join(' ');
+            if (/adsbygoogle|googlesyndication|pagead|tagerror|doubleclick/i.test(text)) {
+              window.__pdfexpressAdSenseErrorLog.push({
+                id: 'early-' + Date.now() + '-' + window.__pdfexpressAdSenseErrorLog.length,
+                source: 'window.onerror',
+                message: String(message || (error && error.message) || 'Erreur adsbygoogle'),
+                filename: source ? String(source) : '',
+                lineno: typeof lineno === 'number' ? lineno : undefined,
+                colno: typeof colno === 'number' ? colno : undefined,
+                timestamp: Date.now(),
+              });
+            }
+          } catch (_e) {}
+          if (typeof prevOnError === 'function') {
+            return prevOnError.apply(this, arguments);
+          }
+          return false;
+        };
       } catch (e) {}
     </script>
     <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7807016100432800"
      crossorigin="anonymous"
      onload="this.dataset.loaded='true'"
-     onerror="this.dataset.errored='true'"></script>
+     onerror="this.dataset.errored='true';try{window.__pdfexpressAdSenseErrorLog=window.__pdfexpressAdSenseErrorLog||[];window.__pdfexpressAdSenseErrorLog.push({id:'early-script-'+Date.now(),source:'resource',message:'Échec de chargement du script adsbygoogle.js',filename:this.src,timestamp:Date.now()});}catch(_e){}"></script>
   </head>
   <body class="bg-brand-bgLight text-neutral-800 dark:bg-brand-bgDark dark:text-neutral-100 min-h-screen antialiased selection:bg-brand-red selection:text-white overflow-x-hidden max-w-full">
     <div id="root"></div>

@@ -241,11 +241,11 @@ export const SITE_INFO_PAGES: Record<string, SiteInfoPage> = {
     section: 'Juridique',
     title: 'Politique de confidentialité',
     subtitle:
-      'Nous respectons strictement la vie privée de vos documents et de vos préférences.',
+      'Nous respectons strictement la vie privée de vos documents (traités localement dans votre navigateur) et vous informons de manière transparente sur les annonces Google AdSense.',
     highlights: [
-      'Aucun stockage serveur permanent de vos fichiers importés.',
-      'Seules vos préférences locales (thème et dernière signature si vous la créez) sont conservées dans votre navigateur.',
-      'Vous pouvez effacer votre signature mémorisée en un clic à tout moment.',
+      'Aucun stockage serveur permanent de vos fichiers PDF importés.',
+      'Transparence sur l’utilisation de cookies Google AdSense (ca-pub-7807016100432800) avec possibilité de refuser la personnalisation.',
+      'Droits RGPD d’accès, de rectification et de suppression via laghribredouane@gmail.com.',
     ],
   },
   terms: {
@@ -253,7 +253,7 @@ export const SITE_INFO_PAGES: Record<string, SiteInfoPage> = {
     section: 'Juridique',
     title: 'Conditions générales d’utilisation',
     subtitle:
-      'Règles d’utilisation claire et transparente de la suite PDFExpress.',
+      'Règles d’utilisation claires et transparentes de la suite PDFExpress.',
     highlights: [
       'Service utilisable gratuitement pour un usage personnel et professionnel.',
       'Vous conservez l’intégralité des droits sur tous les documents traités.',
@@ -265,10 +265,10 @@ export const SITE_INFO_PAGES: Record<string, SiteInfoPage> = {
     section: 'Juridique',
     title: 'Gestion des cookies & stockage local',
     subtitle:
-      'PDFExpress n’utilise aucun cookie publicitaire ni traceur tiers.',
+      'Contrôlez les préférences locales essentielles et les cookies publicitaires Google AdSense.',
     highlights: [
-      'Stockage local utilisé uniquement pour mémoriser votre thème (Clair/Sombre) et votre dernière signature.',
-      'Aucune donnée analytique invasive transmise à des régies publicitaires.',
+      'Stockage local essentiel utilisé pour mémoriser votre thème, votre consentement et votre dernière signature.',
+      'Cookies Google AdSense utilisés pour diffuser et mesurer des annonces (personnalisées ou non personnalisées selon votre choix).',
     ],
   },
   accessibility: {

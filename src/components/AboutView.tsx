@@ -13,21 +13,21 @@ export function AboutView({ onBackHome }: AboutViewProps) {
   const teamMembers = [
     {
       name: 'Redouane Laghrib',
+      initials: 'RL',
       role: 'Fondateur & Lead Architect',
       desc: 'Expert en architectures web et traitement binaire haute performance.',
-      avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80',
     },
     {
       name: 'Sarah Benali',
+      initials: 'SB',
       role: 'Lead Front-End Engineer',
       desc: 'Spécialiste UI/UX et interfaces réactives fluides sous React & Tailwind.',
-      avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300&auto=format&fit=crop&q=80',
     },
     {
       name: 'Yassine Alami',
+      initials: 'YA',
       role: 'Spécialiste Moteur PDF & IA',
       desc: 'Ingénieur en traitement documentaire et intégration des modèles d’intelligence artificielle.',
-      avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=300&auto=format&fit=crop&q=80',
     },
   ];
 
@@ -138,11 +138,12 @@ export function AboutView({ onBackHome }: AboutViewProps) {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {teamMembers.map((member) => (
             <div key={member.name} className="bg-white dark:bg-brand-cardDark rounded-2xl border border-neutral-200 dark:border-brand-borderDark p-6 text-center flex flex-col items-center">
-              <img
-                src={member.avatar}
-                alt={member.name}
-                className="w-24 h-24 rounded-full object-cover mb-4 ring-4 ring-neutral-100 dark:ring-neutral-800 shadow-md"
-              />
+              <div
+                aria-hidden="true"
+                className="w-20 h-20 rounded-full bg-neutral-900 dark:bg-neutral-800 text-white font-display text-xl font-extrabold flex items-center justify-center mb-4 border border-neutral-200 dark:border-neutral-700"
+              >
+                {member.initials}
+              </div>
               <h3 className="text-lg font-bold text-neutral-900 dark:text-white mb-1">
                 {member.name}
               </h3>

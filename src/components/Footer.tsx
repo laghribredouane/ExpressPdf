@@ -155,17 +155,55 @@ export function Footer({
                 {col.heading}
               </h3>
               <ul className="space-y-2.5 text-sm">
-                {col.links.map((link) => (
-                  <li key={link.label}>
-                    <button
-                      type="button"
-                      onClick={() => handleAction(link.action)}
-                      className="text-neutral-400 hover:text-white transition-colors duration-200 text-left"
-                    >
-                      {link.label}
-                    </button>
-                  </li>
-                ))}
+                {col.links.map((link) => {
+                  const infoHrefMap: Record<string, string> = {
+                    about: '/about',
+                    contact: '/contact',
+                    faq: '/faq',
+                    privacy: '/confidentialite',
+                    terms: '/conditions',
+                    cookies: '/cookies',
+                    security: '/securite',
+                    accessibility: '/accessibilite',
+                    sitemap: '/plan-du-site',
+                    legal_compliance: '/mentions-legales',
+                  };
+                  const href =
+                    link.action.type === 'info'
+                      ? infoHrefMap[link.action.pageId]
+                      : link.action.type === 'pricing'
+                      ? '/tarifs'
+                      : link.action.type === 'home'
+                      ? '/'
+                      : link.action.type === 'tool'
+                      ? `/?tool=${encodeURIComponent(link.action.toolId)}`
+                      : undefined;
+
+                  return (
+                    <li key={link.label}>
+                      {href ? (
+                        <a
+                          href={href}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            handleAction(link.action);
+                          }}
+                          className="text-neutral-400 hover:text-white transition-colors duration-200 text-left inline-block"
+                        >
+                          {link.label}
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleAction(link.action)}
+                          className="text-neutral-400 hover:text-white transition-colors duration-200 text-left cursor-pointer"
+                        >
+                          {link.label}
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))}
@@ -229,21 +267,26 @@ export function Footer({
             </span>
             <div className="flex flex-wrap items-center justify-center gap-3">
               {[
-                { label: 'Confidentialité', pageId: 'privacy' },
-                { label: 'Conditions', pageId: 'terms' },
-                { label: 'Cookies', pageId: 'cookies' },
-                { label: 'Sécurité', pageId: 'security' },
-                { label: 'Accessibilité', pageId: 'accessibility' },
-                { label: 'Plan du site', pageId: 'sitemap' },
+                { label: 'Confidentialité', pageId: 'privacy', href: '/confidentialite' },
+                { label: 'Conditions', pageId: 'terms', href: '/conditions' },
+                { label: 'Cookies', pageId: 'cookies', href: '/cookies' },
+                { label: 'Sécurité', pageId: 'security', href: '/securite' },
+                { label: 'Accessibilité', pageId: 'accessibility', href: '/accessibilite' },
+                { label: 'Mentions légales', pageId: 'legal_compliance', href: '/mentions-legales' },
+                { label: 'Plan du site', pageId: 'sitemap', href: '/plan-du-site' },
               ].map((legal) => (
-                <button
+                <a
                   key={legal.pageId}
-                  type="button"
-                  onClick={() => onOpenInfoPage(legal.pageId)}
+                  href={legal.href}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    onOpenInfoPage(legal.pageId);
+                  }}
                   className="hover:text-white transition-colors"
                 >
                   {legal.label}
-                </button>
+                </a>
               ))}
               {onOpenAdSenseTester && (
                 <button
@@ -259,21 +302,36 @@ export function Footer({
 
           <div className="flex items-center gap-4 shrink-0">
             {[
-              { label: 'X', pageId: 'blog' },
-              { label: 'LinkedIn', pageId: 'enterprise' },
-              { label: 'GitHub / API', pageId: 'api' },
-              { label: 'Presse', pageId: 'press' },
-              { label: 'Contact', pageId: 'contact' },
-            ].map((soc) => (
-              <button
-                key={soc.label}
-                type="button"
-                onClick={() => onOpenInfoPage(soc.pageId)}
-                className="hover:text-white transition-colors font-medium"
-              >
-                {soc.label}
-              </button>
-            ))}
+              { label: 'À propos', pageId: 'about', href: '/about' },
+              { label: 'FAQ', pageId: 'faq', href: '/faq' },
+              { label: 'Blog', pageId: 'blog', href: undefined },
+              { label: 'API', pageId: 'api', href: undefined },
+              { label: 'Contact', pageId: 'contact', href: '/contact' },
+            ].map((soc) =>
+              soc.href ? (
+                <a
+                  key={soc.label}
+                  href={soc.href}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                    onOpenInfoPage(soc.pageId);
+                  }}
+                  className="hover:text-white transition-colors font-medium"
+                >
+                  {soc.label}
+                </a>
+              ) : (
+                <button
+                  key={soc.label}
+                  type="button"
+                  onClick={() => onOpenInfoPage(soc.pageId)}
+                  className="hover:text-white transition-colors font-medium cursor-pointer"
+                >
+                  {soc.label}
+                </button>
+              )
+            )}
           </div>
         </div>
       </div>
